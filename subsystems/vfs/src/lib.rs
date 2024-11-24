@@ -33,6 +33,9 @@ pub mod ram;
 pub mod sys;
 pub mod timerfd;
 
+// 引入 WAL 模块
+pub mod wal;
+
 pub static FS: Lazy<Mutex<BTreeMap<String, Arc<dyn VfsFsType>>>> =
     Lazy::new(|| Mutex::new(BTreeMap::new()));
 

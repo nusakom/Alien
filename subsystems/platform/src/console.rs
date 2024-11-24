@@ -1,14 +1,15 @@
+use crate::common_riscv::sbi::console_putchar; // 确保路径正确
 use core::fmt::{Arguments, Result, Write};
-
 use ksync::Mutex;
 use preprint::Print;
+
 /// 系统启动初期使用的输出函数
 #[macro_export]
 macro_rules! print {
-    ($($arg:tt)*) => {
-        let hard_id = arch::hart_id();
-        $crate::console::__print(format_args!("[{}] {}", hard_id, format_args!($($arg)*)))
-    };
+    ($($arg:tt)*) => {{
+        let hart_id = arch::hart_id(); // 获取当前 hart ID
+        $crate::console::__print(format_args!("[{}] {}", hart_id, format_args!($($arg)*)));
+    }};
 }
 
 /// 系统启动初期使用的输出函数
@@ -16,27 +17,10 @@ macro_rules! print {
 macro_rules! println {
     () => ($crate::print!("\n"));
     ($fmt:expr) => ($crate::print!(concat!($fmt, "\n")));
-    ($fmt:expr, $($arg:tt)*) => ($crate::print!(
-        concat!($fmt, "\n"), $($arg)*));
+    ($fmt:expr, $($arg:tt)*) => ($crate::print!(concat!($fmt, "\n"), $($arg)*));
 }
 
-/// Print with color
-///
-/// The first argument is the color, which should be one of the following:
-/// - 30: Black
-/// - 31: Red
-/// - 32: Green
-/// - 33: Yellow
-/// - 34: Blue
-/// - 35: Magenta
-/// - 36: Cyan
-/// - 37: White
-///
-/// # Examples
-/// ```rust
-/// use platform::println_color;
-/// println_color!(31, "This is red");
-/// ```
+/// 彩色输出
 #[macro_export]
 macro_rules! println_color {
     ($color:expr, $fmt:expr) => {
@@ -47,42 +31,48 @@ macro_rules! println_color {
     };
 }
 
+/// 定义 `Stdout` 结构体
 pub struct Stdout;
 
-/// 对`Stdout`实现输出的Trait
+/// 对 `Stdout` 实现输出的 `Write` Trait
 impl Write for Stdout {
     fn write_str(&mut self, s: &str) -> Result {
-        s.as_bytes().iter().for_each(|x| {
-            crate::console_putchar(*x);
+        s.as_bytes().iter().for_each(|&x| {
+            // 使用 SBI 的 `console_putchar` 输出字符
+            console_putchar(x);
         });
         Ok(())
     }
 }
 
+/// 定义一个全局的 `Mutex<Stdout>` 用于同步控制
 static STDOUT: Mutex<Stdout> = Mutex::new(Stdout);
 
-/// 输出函数
-/// 对参数进行输出 主要使用在输出相关的宏中 如println
+/// 输出函数，供宏调用
 #[doc(hidden)]
 pub fn __print(args: Arguments) {
+    // 使用全局 `STDOUT` 打印格式化字符串
     STDOUT.lock().write_fmt(args).unwrap();
 }
 
-/// 系统启动初期使用的输出函数
-///
-/// 在riscv平台上，由于没有实现串口驱动，所以在系统启动初期使用SBI进行输出
+/// 系统启动初期的输出函数
+/// 使用 SBI 调用输出字符串
 pub fn console_write(s: &str) {
-    Stdout.write_str(s).unwrap();
+    let mut stdout = Stdout;
+    stdout.write_str(s).unwrap();
 }
 
+/// 定义 `PrePrint` 结构体
 pub struct PrePrint;
 
+/// 为 `PrePrint` 实现 `Print` Trait
 impl Print for PrePrint {
     fn print(&self, args: Arguments) {
         print!("{}", args);
     }
 }
 
+/// 为 `PrePrint` 实现 `Write` Trait
 impl Write for PrePrint {
     fn write_str(&mut self, s: &str) -> Result {
         print!("{}", s);
