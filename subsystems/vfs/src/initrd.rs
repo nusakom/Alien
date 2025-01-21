@@ -9,6 +9,24 @@ use vfscore::{
     utils::{VfsInodeMode, VfsNodeType},
 };
 
+use dbfs2::init_dbfs;
+use dbfs2::DB;
+use crate::vfs::{do_mount, vfs_mkdir, FileMode, MountFlags};
+
+pub fn mount_dbfs() {
+    // 初始化 DBFS，并将数据库与超级块连接
+    let db = DB::open::<FileOpenOptions, _>(Arc::new(FakeMap), "my-database.db").unwrap();
+    init_db(&db, 16 * 1024 * 1024); // 假设数据库大小为16MB
+    dbfs2::init_dbfs(db); // 初始化 DBFS
+
+    // 注册 DBFS 文件系统
+    register_filesystem(DBFS).unwrap();
+
+    // 创建文件系统挂载点
+    vfs_mkdir::<FakeFSC>("/db", FileMode::FMODE_WRITE).unwrap();
+    let _db = do_mount::<FakeFSC>("block", "/db", "dbfs", MountFlags::empty(), None).unwrap();
+}
+
 pub fn populate_initrd(root: Arc<dyn VfsDentry>) -> AlienResult<()> {
     root.inode()?
         .create("bin", VfsNodeType::Dir, "rwxr-xr-x".into(), None)?;
