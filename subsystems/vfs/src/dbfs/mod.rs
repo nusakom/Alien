@@ -1,8 +1,11 @@
 // dbfs/mod.rs
-pub mod file_ops;
-pub mod metadata;
+
+#![no_std]
+
 pub mod db;
+pub mod file;
+pub mod error;
 pub mod utils;
 
-pub use file_ops::async_create_file;
-pub use file_ops::async_read_file;
+pub use db::Db;
+pub use file::{sync_create_file, sync_read_file};
