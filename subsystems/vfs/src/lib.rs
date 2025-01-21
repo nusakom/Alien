@@ -20,7 +20,7 @@ use vfscore::inode::VfsInode;
 use vfscore::{dentry::VfsDentry, fstype::VfsFsType, path::VfsPath, utils::VfsTimeSpec};
 
 use crate::dev::DevFsProviderImpl;
-pub mod dbfs;
+pub mod dbfs2;
 pub mod dev;
 pub mod epoll;
 pub mod eventfd;
@@ -33,6 +33,7 @@ pub mod proc;
 pub mod ram;
 pub mod sys;
 pub mod timerfd;
+pub mod rvfs;
 
 pub static FS: Lazy<Mutex<BTreeMap<String, Arc<dyn VfsFsType>>>> =
     Lazy::new(|| Mutex::new(BTreeMap::new()));

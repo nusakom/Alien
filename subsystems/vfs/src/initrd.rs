@@ -7,25 +7,25 @@ use vfscore::{
     path::VfsPath,
     utils::{VfsInodeMode, VfsNodeType},
 };
-use async_std::sync::RwLock;  // 使用 async_std::sync 来处理异步锁
+use tokio::sync::RwLock;  // 使用 tokio::sync 来处理异步锁
 
 pub async fn populate_initrd(root: Arc<dyn VfsDentry>) -> AlienResult<()> {
     // 创建目录
     root.inode()?
         .create("bin", VfsNodeType::Dir, "rwxr-xr-x".into(), None).map_err(|e| {
-            println!("Error creating 'bin' directory: {:?}", e);
+            log::error!("Error creating 'bin' directory: {:?}", e);
             e
         })?;
 
     root.inode()?
         .create("sbin", VfsNodeType::Dir, "rwxr-xr-x".into(), None).map_err(|e| {
-            println!("Error creating 'sbin' directory: {:?}", e);
+            log::error!("Error creating 'sbin' directory: {:?}", e);
             e
         })?;
 
     // 解析initrd数据
     parse_initrd_data(root).await?;
-    println!("Initrd populate success");
+    log::info!("Initrd populate success");
 
     Ok(())
 }
@@ -55,24 +55,24 @@ async fn parse_initrd_data(root: Arc<dyn VfsDentry>) -> AlienResult<()> {
                     let data = entry.file();
                     let target = core::str::from_utf8(data).unwrap();
                     path.join(name)?.symlink(target).map_err(|e| {
-                        println!("Error creating symlink for {}: {:?}", name, e);
+                        log::error!("Error creating symlink for {}: {:?}", name, e);
                         e
                     })?;
                 } else if mode.contains(Mode::REGULAR_FILE) {
                     // 创建常规文件
                     let f = path.join(name)?.open(Some(inode_mode)).map_err(|e| {
-                        println!("Error opening file {}: {:?}", name, e);
+                        log::error!("Error opening file {}: {:?}", name, e);
                         e
                     })?;
                     f.inode()?.write_at(0, entry.file()).map_err(|e| {
-                        println!("Error writing to file {}: {:?}", name, e);
+                        log::error!("Error writing to file {}: {:?}", name, e);
                         e
                     })?;
                 }
             }
         }
     } else {
-        println!("No initrd data found.");
+        log::error!("No initrd data found.");
     }
 
     Ok(())
