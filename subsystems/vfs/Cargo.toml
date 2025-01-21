@@ -49,3 +49,12 @@ default = ["initrd"]
 ext = ["dep:lwext4-vfs","dep:printf-compat","dep:cty", "tinyrlibc"]
 fat = ["dep:fat-vfs"]
 initrd  = ["dep:libflate","dep:cpio_reader","dep:core2"]
+
+[dependencies.smoltcp]
+version = "0.10.0"
+features = ["no_std"]
+
+[dependencies.vfs]
+path = "../path_to_vfs"  # 如果是本地依赖
+version = ">= 0.1.0"     # 或者确保适配的版本
+
