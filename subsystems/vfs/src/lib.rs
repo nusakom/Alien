@@ -20,7 +20,6 @@ use vfscore::inode::VfsInode;
 use vfscore::{dentry::VfsDentry, fstype::VfsFsType, path::VfsPath, utils::VfsTimeSpec};
 
 use crate::dev::DevFsProviderImpl;
-pub mod dbfs2;
 pub mod dev;
 pub mod epoll;
 pub mod eventfd;

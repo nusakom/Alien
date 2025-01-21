@@ -4,129 +4,58 @@ use core::fmt::Debug;
 use core::io::SeekFrom;
 use std::collections::HashMap;
 
-// 假设已有的库
-use vfscore::{
-    dentry::VfsDentry,
-    inode::{VfsInode, VfsInodeMode},
-    poll::{PollEvents},
-    path::VfsPath,
-    utils::{AlienResult, LinuxErrno, OpenFlags, VfsFileStat},
-    downcast::DowncastSync,
+// 假设我们有DBFS2的接口
+use dbfs2::{
+    File as Dbfs2File,
+    FileSystem as Dbfs2FileSystem,
+    FileStat,
+    OpenFlags,
 };
 
-// 定义文件 trait，描述文件操作的接口
+// 文件 trait，描述文件操作的接口
 pub trait File: DowncastSync + Debug {
     fn read(&self, buf: &mut [u8]) -> AlienResult<usize>;
     fn write(&self, buf: &[u8]) -> AlienResult<usize>;
-    fn read_at(&self, _offset: u64, _buf: &mut [u8]) -> AlienResult<usize> {
-        Err(LinuxErrno::ENOSYS) // 未实现错误
-    }
-    fn write_at(&self, _offset: u64, _buf: &[u8]) -> AlienResult<usize> {
-        Err(LinuxErrno::ENOSYS) // 未实现错误
-    }
-    fn flush(&self) -> AlienResult<()> {
-        Ok(())
-    }
-    fn fsync(&self) -> AlienResult<()> {
-        Ok(())
-    }
     fn seek(&self, pos: SeekFrom) -> AlienResult<u64>;
-    fn get_attr(&self) -> AlienResult<VfsFileStat>;
-    fn ioctl(&self, _cmd: u32, _arg: usize) -> AlienResult<usize> {
-        Err(LinuxErrno::ENOSYS) // 未实现错误
-    }
-    fn set_open_flag(&self, _flag: OpenFlags);
+    fn get_attr(&self) -> AlienResult<FileStat>;
+    fn set_open_flag(&self, flag: OpenFlags);
     fn get_open_flag(&self) -> OpenFlags;
     fn dentry(&self) -> Arc<dyn VfsDentry>;
     fn inode(&self) -> Arc<dyn VfsInode>;
-    fn readdir(&self, _buf: &mut [u8]) -> AlienResult<usize> {
-        Err(LinuxErrno::ENOSYS) // 未实现错误
-    }
-    fn truncate(&self, _len: u64) -> AlienResult<()> {
-        Err(LinuxErrno::ENOSYS) // 未实现错误
-    }
-    fn is_readable(&self) -> bool;
-    fn is_writable(&self) -> bool;
-    fn is_append(&self) -> bool;
-    fn poll(&self, _event: PollEvents) -> AlienResult<PollEvents> {
-        panic!("poll is not implemented for :{:?}", self)
-    }
 }
 
-// 文件的内存实现
+// 内存实现的文件
 pub struct RvfsFile {
     name: String,
-    data: Vec<u8>,
+    dbfs2_file: Arc<Dbfs2File>,
     open_flag: OpenFlags,
-    inode: Arc<dyn VfsInode>,
-    dentry: Arc<dyn VfsDentry>,
 }
 
 impl RvfsFile {
-    pub fn new(name: String, inode: Arc<dyn VfsInode>, dentry: Arc<dyn VfsDentry>) -> Self {
+    pub fn new(name: String, dbfs2_file: Arc<Dbfs2File>) -> Self {
         RvfsFile {
             name,
-            data: Vec::new(),
+            dbfs2_file,
             open_flag: OpenFlags::O_RDONLY,
-            inode,
-            dentry,
         }
     }
 }
 
 impl File for RvfsFile {
     fn read(&self, buf: &mut [u8]) -> AlienResult<usize> {
-        let len = buf.len().min(self.data.len());
-        buf[..len].copy_from_slice(&self.data[..len]);
-        Ok(len)
+        self.dbfs2_file.read(buf)
     }
 
     fn write(&self, buf: &[u8]) -> AlienResult<usize> {
-        if !self.is_writable() {
-            return Err(LinuxErrno::EPERM);
-        }
-        self.data.extend_from_slice(buf);
-        Ok(buf.len())
+        self.dbfs2_file.write(buf)
     }
 
     fn seek(&self, pos: SeekFrom) -> AlienResult<u64> {
-        match pos {
-            SeekFrom::Start(offset) => {
-                if offset > self.data.len() as u64 {
-                    Err(LinuxErrno::EINVAL)
-                } else {
-                    Ok(offset)
-                }
-            }
-            SeekFrom::End(offset) => {
-                let new_pos = self.data.len() as u64 + offset;
-                if new_pos < 0 {
-                    Err(LinuxErrno::EINVAL)
-                } else {
-                    Ok(new_pos)
-                }
-            }
-            SeekFrom::Current(offset) => {
-                let new_pos = (self.data.len() as i64 + offset) as u64;
-                if new_pos < 0 {
-                    Err(LinuxErrno::EINVAL)
-                } else {
-                    Ok(new_pos)
-                }
-            }
-        }
+        self.dbfs2_file.seek(pos)
     }
 
-    fn get_attr(&self) -> AlienResult<VfsFileStat> {
-        let stat = VfsFileStat {
-            size: self.data.len() as u64,
-            blocks: (self.data.len() as u64 + 511) / 512, // 块大小假设为 512 字节
-            mode: self.inode().mode(),
-            nlink: 1,
-            uid: 0,
-            gid: 0,
-        };
-        Ok(stat)
+    fn get_attr(&self) -> AlienResult<FileStat> {
+        self.dbfs2_file.get_attr()
     }
 
     fn set_open_flag(&self, flag: OpenFlags) {
@@ -138,60 +67,57 @@ impl File for RvfsFile {
     }
 
     fn dentry(&self) -> Arc<dyn VfsDentry> {
-        self.dentry.clone()
+        self.dbfs2_file.dentry()
     }
 
     fn inode(&self) -> Arc<dyn VfsInode> {
-        self.inode.clone()
-    }
-
-    fn is_readable(&self) -> bool {
-        self.open_flag.contains(OpenFlags::O_RDONLY) || self.open_flag.contains(OpenFlags::O_RDWR)
-    }
-
-    fn is_writable(&self) -> bool {
-        self.open_flag.contains(OpenFlags::O_WRONLY) || self.open_flag.contains(OpenFlags::O_RDWR)
-    }
-
-    fn is_append(&self) -> bool {
-        self.open_flag.contains(OpenFlags::O_APPEND)
+        self.dbfs2_file.inode()
     }
 }
 
 // 文件系统实现
 pub struct Rvfs {
-    files: HashMap<String, Arc<dyn File>>,
+    dbfs2_fs: Arc<Dbfs2FileSystem>,
 }
 
 impl Rvfs {
-    pub fn new() -> Self {
-        Rvfs {
-            files: HashMap::new(),
-        }
+    pub fn new(dbfs2_fs: Arc<Dbfs2FileSystem>) -> Self {
+        Rvfs { dbfs2_fs }
     }
 
-    pub fn create_file(&mut self, name: String, inode: Arc<dyn VfsInode>, dentry: Arc<dyn VfsDentry>) {
-        let file = Arc::new(RvfsFile::new(name.clone(), inode, dentry));
-        self.files.insert(name, file);
+    pub fn create_file(&self, name: String, open_flags: OpenFlags) -> AlienResult<Arc<dyn File>> {
+        let dbfs2_file = self.dbfs2_fs.create_file(name.clone(), open_flags)?;
+        Ok(Arc::new(RvfsFile::new(name, dbfs2_file)))
     }
 
     pub fn get_file(&self, name: &str) -> Option<Arc<dyn File>> {
-        self.files.get(name).cloned()
+        if let Some(dbfs2_file) = self.dbfs2_fs.get_file(name) {
+            Some(Arc::new(RvfsFile::new(name.to_string(), dbfs2_file)))
+        } else {
+            None
+        }
     }
 }
 
 // 测试示例
 fn main() {
-    // 假设我们有 inode 和 dentry 实例
-    let inode: Arc<dyn VfsInode> = Arc::new(...); // 填入具体的 inode 实现
-    let dentry: Arc<dyn VfsDentry> = Arc::new(...); // 填入具体的 dentry 实现
+    // 假设我们有一个 DBFS2 文件系统实例
+    let dbfs2_fs: Arc<Dbfs2FileSystem> = Arc::new(...); // 填入具体的 DBFS2 文件系统实现
 
-    let mut fs = Rvfs::new();
-    fs.create_file("test.txt".to_string(), inode.clone(), dentry.clone());
+    let rvfs = Rvfs::new(dbfs2_fs);
 
-    if let Some(file) = fs.get_file("test.txt") {
-        let mut buf = vec![0u8; 100];
-        file.read(&mut buf).unwrap();
-        println!("File read data: {:?}", buf);
-    }
+    // 创建文件
+    let file = rvfs.create_file("test.txt".to_string(), OpenFlags::O_RDWR).unwrap();
+
+    // 读取文件
+    let mut buf = vec![0u8; 100];
+    file.read(&mut buf).unwrap();
+    println!("File read data: {:?}", buf);
+
+    // 写入文件
+    file.write(b"Hello, RVFS!").unwrap();
+
+    // 获取文件属性
+    let stat = file.get_attr().unwrap();
+    println!("File attributes: {:?}", stat);
 }
