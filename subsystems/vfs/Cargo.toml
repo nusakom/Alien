@@ -48,9 +48,3 @@ default = ["initrd"]
 ext = ["dep:lwext4-vfs","dep:printf-compat","dep:cty", "tinyrlibc"]
 fat = ["dep:fat-vfs"]
 initrd  = ["dep:libflate","dep:cpio_reader","dep:core2"]
-
-[profile.dev]
-panic = "abort"
-
-[profile.release]
-panic = "abort"
