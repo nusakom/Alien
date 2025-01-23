@@ -32,7 +32,6 @@ pub mod proc;
 pub mod ram;
 pub mod sys;
 pub mod timerfd;
-pub mod rvfs;
 
 pub static FS: Lazy<Mutex<BTreeMap<String, Arc<dyn VfsFsType>>>> =
     Lazy::new(|| Mutex::new(BTreeMap::new()));
