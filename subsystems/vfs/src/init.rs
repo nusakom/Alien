@@ -1,24 +1,9 @@
-// dbfs2/init.rs
-use dbfs2::{init_dbfs, DB, DbfsResult};
+// vfs/src/init.rs
+use crate::dbfs2_fs::Dbfs2FS; // 引入你刚刚实现的 dbfs2 文件系统
 
-const SLICE_SIZE: usize = 4096;  // 假设每块的大小为4096字节
-
-pub fn init_db(db: &DB, size: u64) -> DbfsResult<()> {
-    let tx = db.tx(true).map_err(|e| DbfsResult::Err(e.to_string()))?;
-    
-    let bucket = tx.get_bucket("super_blk");
-    let bucket = if bucket.is_ok() {
-        bucket.unwrap()
-    } else {
-        tx.create_bucket("super_blk").map_err(|e| DbfsResult::Err(e.to_string()))?
-    };
-    
-    bucket.put("continue_number", 1usize.to_be_bytes()).map_err(|e| DbfsResult::Err(e.to_string()))?;
-    bucket.put("magic", 1111u32.to_be_bytes()).map_err(|e| DbfsResult::Err(e.to_string()))?;
-    bucket.put("blk_size", (SLICE_SIZE as u32).to_be_bytes()).map_err(|e| DbfsResult::Err(e.to_string()))?;
-    bucket.put("disk_size", size.to_be_bytes()).map_err(|e| DbfsResult::Err(e.to_string()))?;
-    
-    tx.commit().map_err(|e| DbfsResult::Err(e.to_string()))?;
-    
-    Ok(())
+pub fn init_vfs() {
+    // 初始化 dbfs2 文件系统
+    let dbfs = Dbfs2FS::init("/path/to/db/database").unwrap();
+    // 进行挂载等操作
+    dbfs.mount("/mnt/dbfs").unwrap();
 }
