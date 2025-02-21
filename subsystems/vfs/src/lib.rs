@@ -20,6 +20,9 @@ use vfscore::inode::VfsInode;
 use vfscore::{dentry::VfsDentry, fstype::VfsFsType, path::VfsPath, utils::VfsTimeSpec};
 
 use crate::dev::DevFsProviderImpl;
+
+// 引入 DBFS 模块
+pub mod dbfs;
 pub mod dev;
 pub mod epoll;
 pub mod eventfd;
@@ -38,6 +41,7 @@ pub static FS: Lazy<Mutex<BTreeMap<String, Arc<dyn VfsFsType>>>> =
 
 static SYSTEM_ROOT_FS: Once<Arc<dyn VfsDentry>> = Once::new();
 
+// 为各个文件系统类型定义别名
 type SysFs = dynfs::DynFs<CommonFsProviderImpl, spin::Mutex<()>>;
 type ProcFs = dynfs::DynFs<CommonFsProviderImpl, spin::Mutex<()>>;
 type RamFs = ramfs::RamFs<CommonFsProviderImpl, spin::Mutex<()>>;
@@ -90,6 +94,8 @@ fn register_all_fs() {
     let devfs = Arc::new(DevFs::new(DevFsProviderImpl));
     let tmpfs = Arc::new(TmpFs::new(CommonFsProviderImpl));
     let pipefs = Arc::new(PipeFs::new(CommonFsProviderImpl, "pipefs"));
+    // 创建一个 DBFS 的实例（这里使用 dynfs 作为底层接口实现）
+    let dbfs_fs = Arc::new(dynfs::DynFs::new(CommonFsProviderImpl, "dbfs"));
 
     FS.lock().insert("procfs".to_string(), procfs);
     FS.lock().insert("sysfs".to_string(), sysfs);
@@ -97,6 +103,7 @@ fn register_all_fs() {
     FS.lock().insert("devfs".to_string(), devfs);
     FS.lock().insert("tmpfs".to_string(), tmpfs);
     FS.lock().insert("pipefs".to_string(), pipefs);
+    FS.lock().insert("dbfs".to_string(), dbfs_fs); // 注册 DBFS
 
     #[cfg(feature = "fat")]
     let diskfs = Arc::new(DiskFs::new(CommonFsProviderImpl));
@@ -149,6 +156,13 @@ pub fn init_filesystem() -> AlienResult<()> {
 
     let diskfs_root = diskfs.i_mount(0, "/tests", Some(blk_inode), &[])?;
     path.join("tests")?.mount(diskfs_root, 0)?;
+
+    // 初始化并挂载 DBFS，使用 "my-database.db" 作为数据库文件
+    let dbfs_fs = FS.lock().index("dbfs").clone();
+    let dbfs_root = dbfs::init_dbfs_system("my-database.db", dbfs_fs)
+        .expect("DBFS init failed");
+    path.join("dbfs")?.mount(dbfs_root, 0)?;
+
     println!("mount fs success");
 
     vfscore::path::print_fs_tree(&mut VfsOutPut, ramfs_root.clone(), "".to_string(), false)
