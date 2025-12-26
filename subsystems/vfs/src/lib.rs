@@ -13,12 +13,21 @@ use core::ops::Index;
 
 use constants::AlienResult;
 use dynfs::DynFsKernelProvider;
-use dbfs_vfs::{DBFS, SimpleDBFSProvider};
+use dbfs_vfs::DBFSProvider;
 use ksync::Mutex;
 use spin::{Lazy, Once};
 #[cfg(feature = "ext")]
 use vfscore::inode::VfsInode;
 use vfscore::{dentry::VfsDentry, fstype::VfsFsType, path::VfsPath, utils::VfsTimeSpec};
+
+#[derive(Clone)]
+pub struct SimpleDBFSProvider;
+
+impl DBFSProvider for SimpleDBFSProvider {
+    fn current_time(&self) -> vfscore::utils::VfsTimeSpec {
+        vfscore::utils::VfsTimeSpec::new(0, 0)
+    }
+}
 
 use crate::dev::DevFsProviderImpl;
 pub mod dev;
@@ -33,6 +42,8 @@ pub mod proc;
 pub mod ram;
 pub mod sys;
 pub mod timerfd;
+
+extern crate dbfs_vfs;
 
 pub static FS: Lazy<Mutex<BTreeMap<String, Arc<dyn VfsFsType>>>> =
     Lazy::new(|| Mutex::new(BTreeMap::new()));
@@ -84,6 +95,8 @@ impl lwext4_vfs::ExtDevProvider for CommonFsProviderImpl {
     }
 }
 
+type DbfsFs = dbfs_vfs::DBFSFs<SimpleDBFSProvider, spin::Mutex<()>>;
+
 fn register_all_fs() {
     let procfs = Arc::new(ProcFs::new(CommonFsProviderImpl, "procfs"));
     let sysfs = Arc::new(SysFs::new(CommonFsProviderImpl, "sysfs"));
@@ -100,16 +113,20 @@ fn register_all_fs() {
     FS.lock().insert("pipefs".to_string(), pipefs);
 
     #[cfg(feature = "fat")]
-    let diskfs = Arc::new(DiskFs::new(CommonFsProviderImpl));
-    #[cfg(feature = "ext")]
-    let diskfs = Arc::new(DiskFs::new(
-        lwext4_vfs::ExtFsType::Ext4,
-        CommonFsProviderImpl,
-    ));
+    {
+        let diskfs = Arc::new(DiskFs::new(CommonFsProviderImpl));
+        FS.lock().insert("diskfs".to_string(), diskfs);
+    }
+    #[cfg(all(feature = "ext", not(feature = "fat")))]
+    {
+        let diskfs = Arc::new(DiskFs::new(
+            lwext4_vfs::ExtFsType::Ext4,
+            CommonFsProviderImpl,
+        ));
+        FS.lock().insert("diskfs".to_string(), diskfs);
+    }
 
-    FS.lock().insert("diskfs".to_string(), diskfs);
-
-    let dbfs = DBFS::new("data", SimpleDBFSProvider);
+    let dbfs = DbfsFs::new(SimpleDBFSProvider);
     FS.lock().insert("dbfs".to_string(), dbfs);
 
     println!("register fs success");
@@ -134,7 +151,7 @@ pub fn init_filesystem() -> AlienResult<()> {
     let path = VfsPath::new(ramfs_root.clone(), ramfs_root.clone());
     path.join("proc")?.mount(procfs_root, 0)?;
     path.join("sys")?.mount(sysfs_root, 0)?;
-    path.join("dev")?.mount(devfs_root, 0)?;
+    path.join("dev")?.mount(devfs_root.clone(), 0)?;
     path.join("tmp")?.mount(tmpfs_root.clone(), 0)?;
 
     let shm_ramfs = FS
@@ -145,8 +162,10 @@ pub fn init_filesystem() -> AlienResult<()> {
     path.join("dev/shm")?.mount(shm_ramfs, 0)?;
 
     ramfs_root.inode()?.create("data", vfscore::utils::VfsNodeType::Dir, vfscore::utils::VfsNodePerm::from_bits_truncate(0o755), None)?;
+    
+    let sda_inode = devfs_root.inode()?.lookup("sda")?;
     let dbfs = FS.lock().index("dbfs").clone();
-    let dbfs_root = dbfs.i_mount(0, "/data", None, &[])?;
+    let dbfs_root = dbfs.i_mount(0, "/data", Some(sda_inode), &[])?;
     path.join("data")?.mount(dbfs_root.clone(), 0)?;
 
     // Runtime Verification

@@ -12,3 +12,6 @@ members = [
     "subsystems/dbfs-vfs",
     "subsystems/jammdb",
 ]
+
+[patch."https://github.com/nusakom/jammdb.git"]
+jammdb = { path = "subsystems/jammdb" }

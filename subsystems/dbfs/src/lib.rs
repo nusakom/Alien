@@ -2,174 +2,409 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::sync::Arc;
+#[cfg(target_os = "none")]
 use ksync::Mutex;
-use spin::Once;
+#[cfg(not(target_os = "none"))]
+use spin::Mutex;
 use jammdb::DB;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use device_interface::BlockDevice;
-use crate::layout::{Serializer, Superblock, MAGIC, VERSION, BLOCK_SIZE};
+use crate::layout::{Serializer, Superblock, MAGIC};
+use crate::common::*;
 
 pub mod layout;
 pub mod wal; // We'll skip complex WAL logic for this step to focus on basic persistence
 
-// Global Instances
-static DB_INSTANCE: Once<Arc<DB>> = Once::new();
-static DISK_DEVICE: Once<Arc<dyn BlockDevice>> = Once::new();
-static INODE_COUNTER: AtomicUsize = AtomicUsize::new(2);
+pub struct Dbfs {
+    db: Arc<DB>,
+    device: Arc<dyn BlockDevice>,
+    inode_counter: AtomicUsize,
+    block_allocator: AtomicUsize,
+}
 
-// Simple Block Allocator (Atomic counter for now, starting after Superblock+WAL)
-static BLOCK_ALLOCATOR: AtomicUsize = AtomicUsize::new(1024); // Start at block 1024
+impl Dbfs {
+    pub fn new(db: DB, device: Arc<dyn BlockDevice>) -> Arc<Self> {
+        let dbfs = Arc::new(Self {
+            db: Arc::new(db),
+            device: device.clone(),
+            inode_counter: AtomicUsize::new(2),
+            block_allocator: AtomicUsize::new(1024),
+        });
 
-pub fn init_dbfs(db: DB, device: Arc<dyn BlockDevice>) {
-    DB_INSTANCE.call_once(|| Arc::new(db));
-    DISK_DEVICE.call_once(|| device);
-    
-    // Initialize Superblock on disk if not present
-    let device = get_device();
-    let mut buf = [0u8; 512];
-    if device.read(&mut buf, 0).is_ok() {
-        if &buf[0..8] != MAGIC {
-            // Format disk
-            log::info!("DBFS: Formatting disk...");
-            let sb = Superblock::new(1, 1, 1023, 1024);
-            let data = sb.serialize();
-            let mut sector = [0u8; 512];
-            sector[..data.len()].copy_from_slice(&data);
-            device.write(&sector, 0).expect("Failed to write superblock");
-            device.flush().ok();
-            
-            // Write Root Inode
-            use crate::fs_type::dbfs_common_root_inode;
-            use crate::common::{DbfsTimeSpec, DbfsAttr, DbfsFileType};
-            // Manually creating root attr for persistence
-             let root_attr = DbfsAttr {
-                ino: 1, 
-                size: 0,
-                perm: 0o777,
-                nlink: 1,
-                uid: 0,
-                gid: 0,
-                atime: DbfsTimeSpec::default(),
-                mtime: DbfsTimeSpec::default(),
-                ctime: DbfsTimeSpec::default(),
-                kind: DbfsFileType::Directory,
-            };
-            persist_inode(&root_attr);
-            device.flush().ok();
+        // Initialize Superblock on disk if not present
+        let mut buf = [0u8; 512];
+        if device.read(&mut buf, 0).is_ok() {
+            if &buf[0..8] != MAGIC {
+                // Format disk
+                log::info!("DBFS: Formatting disk...");
+                let sb = Superblock::new(1, 1, 1023, 1024);
+                let data = sb.serialize();
+                let mut sector = [0u8; 512];
+                sector[..data.len()].copy_from_slice(&data);
+                device.write(&sector, 0).expect("Failed to write superblock");
+                device.flush().ok();
+
+                // Write Root Inode
+                let root_attr = DbfsAttr {
+                    ino: 1,
+                    size: 0,
+                    perm: 0o777,
+                    nlink: 1,
+                    uid: 0,
+                    gid: 0,
+                    atime: DbfsTimeSpec::default(),
+                    mtime: DbfsTimeSpec::default(),
+                    ctime: DbfsTimeSpec::default(),
+                    kind: DbfsFileType::Directory,
+                };
+                let mut tx = dbfs.db.tx();
+                tx.put(alloc::format!("i:1").as_bytes(), &root_attr.serialize()).ok();
+                tx.commit().ok();
+                
+                dbfs.persist_inode(&root_attr);
+                device.flush().ok();
+            } else {
+                log::info!("DBFS: Mounted existing filesystem. Recovering state...");
+                dbfs.recover_fs();
+            }
+        }
+        dbfs
+    }
+
+    fn recover_fs(&self) {
+        log::info!("DBFS: Recovery started.");
+        let mut sector = [0u8; 512];
+
+        // 1. Recover Root Inode (Ino 1) -> Block 2001
+        if self.device.read(&mut sector, 2001 * 512).is_ok() {
+            if let Some(root_attr) = common::DbfsAttr::deserialize(&sector) {
+                let mut tx = self.db.tx();
+                let key = alloc::format!("i:1");
+                tx.put(key.as_bytes(), &root_attr.serialize()).ok();
+                log::info!("DBFS: Recovered Root Inode.");
+
+                // 2. Recover Root Data (Children) -> Block 10100
+                if self.device.read(&mut sector, 10100 * 512).is_ok() {
+                    if let Some(children) = <alloc::vec::Vec<file::DirEntry>>::deserialize(&sector) {
+                        let d_key = alloc::format!("d:1");
+                        tx.put(d_key.as_bytes(), &children.serialize()).ok();
+                        log::info!("DBFS: Recovered Root Children List ({} entries).", children.len());
+
+                        let mut max_ino = 1;
+
+                        // 3. Recover Children
+                        for child in children {
+                            log::info!("DBFS: Recovering child: {}", child.name);
+                            let child_ino = child.ino;
+                            if child_ino > max_ino { max_ino = child_ino; }
+
+                            // Recover Inode -> Block 2000 + ino
+                            let mut child_sector = [0u8; 512];
+                            if self.device.read(&mut child_sector, (2000 + child_ino) * 512).is_ok() {
+                                if let Some(child_attr) = common::DbfsAttr::deserialize(&child_sector) {
+                                    let c_key = alloc::format!("i:{}", child_ino);
+                                    tx.put(c_key.as_bytes(), &child_attr.serialize()).ok();
+
+                                    // Recover Data (Chunk 0) -> Block 10000 + ino*100
+                                    let data_block = 10000 + (child_ino * 100);
+                                    let mut data_sector = [0u8; 512];
+                                    if self.device.read(&mut data_sector, data_block * 512).is_ok() {
+                                        let size = child_attr.size as usize;
+                                        let read_len = core::cmp::min(size, 512);
+                                        let f_key = alloc::format!("f:{}:0", child_ino);
+                                        tx.put(f_key.as_bytes(), &data_sector[..read_len]).ok();
+                                    }
+                                }
+                            }
+                        }
+                        // Commit all recovered metadata
+                        tx.commit().ok();
+                        // Sync Inode Counter
+                        self.inode_counter.store(max_ino + 1, Ordering::SeqCst);
+                    }
+                }
+            } else {
+                log::warn!("DBFS: Failed to deserialize Root Inode during recovery.");
+            }
         } else {
-             log::info!("DBFS: Mounted existing filesystem. Recovering state...");
-             let db = get_db();
-             recover_fs(db, &device);
+            log::warn!("DBFS: Failed to read Root Inode block.");
         }
     }
-}
 
-fn recover_fs(db: &DB, device: &Arc<dyn BlockDevice>) {
-    use crate::layout::Serializer;
-    
-    log::info!("DBFS: Recovery started.");
-    let mut sector = [0u8; 512];
-    
-    // 1. Recover Root Inode (Ino 1) -> Block 2001
-    if device.read(&mut sector, 2001 * 512).is_ok() {
-         if let Some(root_attr) = common::DbfsAttr::deserialize(&sector) {
-             let key = alloc::format!("i:1");
-             db.put(key.as_bytes(), &root_attr.serialize()).ok();
-             log::info!("DBFS: Recovered Root Inode.");
-             
-             // 2. Recover Root Data (Children) -> Block 10100
-             if device.read(&mut sector, 10100 * 512).is_ok() {
-                  if let Some(children) = <alloc::vec::Vec<file::DirEntry>>::deserialize(&sector) {
-                      let d_key = alloc::format!("d:1");
-                       db.put(d_key.as_bytes(), &children.serialize()).ok();
-                       log::info!("DBFS: Recovered Root Children List ({} entries).", children.len());
-                       
-                       let mut max_ino = 1;
+    fn persist_inode(&self, attr: &common::DbfsAttr) {
+        let data = attr.serialize();
+        let block_id = 2000 + attr.ino;
+        let mut sector = [0u8; 512];
+        if data.len() <= 512 {
+            sector[..data.len()].copy_from_slice(&data);
+            self.device.write(&sector, block_id * 512).ok();
+        }
+    }
 
-                       // 3. Recover Children
-                       for child in children {
-                           log::info!("DBFS: Recovering child: {}", child.name);
-                           let child_ino = child.ino;
-                           if child_ino > max_ino { max_ino = child_ino; }
-                           
-                           // Recover Inode -> Block 2000 + ino
-                           if device.read(&mut sector, (2000 + child_ino) * 512).is_ok() {
-                               if let Some(child_attr) = common::DbfsAttr::deserialize(&sector) {
-                                   let c_key = alloc::format!("i:{}", child_ino);
-                                   db.put(c_key.as_bytes(), &child_attr.serialize()).ok();
-                                   
-                                   // Recover Data (Chunk 0) -> Block 10000 + ino*100
-                                   let data_block = 10000 + (child_ino * 100);
-                                   if device.read(&mut sector, data_block * 512).is_ok() {
-                                       let size = child_attr.size as usize;
-                                       let read_len = core::cmp::min(size, 512);
-                                       let f_key = alloc::format!("f:{}:0", child_ino);
-                                       db.put(f_key.as_bytes(), &sector[..read_len]).ok();
-                                   }
-                               }
-                           }
-                       }
-                       // Sync Inode Counter
-                       let _ = INODE_COUNTER.compare_exchange(1, max_ino + 1, Ordering::SeqCst, Ordering::SeqCst);
-                  }
+    fn persist_file_chunk(&self, ino: usize, chunk_id: usize, data: &[u8]) {
+        let block_id = 10000 + (ino * 100) + chunk_id;
+        let mut sector = [0u8; 512];
+        let write_len = core::cmp::min(data.len(), 512);
+        sector[..write_len].copy_from_slice(&data[..write_len]);
+        self.device.write(&sector, block_id * 512).ok();
+    }
+
+    pub fn read(&self, ino: usize, buf: &mut [u8], offset: u64) -> Result<usize, common::DbfsError> {
+        let key = alloc::format!("f:{}:{}", ino, 0);
+        if let Some(data) = self.db.get(key.as_bytes()) {
+            let offset = offset as usize;
+            if offset >= data.len() {
+                return Ok(0);
+            }
+            let read_len = core::cmp::min(buf.len(), data.len() - offset);
+            buf[..read_len].copy_from_slice(&data[offset..offset+read_len]);
+            Ok(read_len)
+        } else {
+            Ok(0)
+        }
+    }
+
+    pub async fn read_async(&self, ino: usize, buf: &mut [u8], offset: u64) -> Result<usize, common::DbfsError> {
+        self.read(ino, buf, offset)
+    }
+
+    pub fn write(&self, ino: usize, buf: &[u8], offset: u64) -> Result<usize, common::DbfsError> {
+        let mut tx = self.db.tx();
+        let key = alloc::format!("f:{}:{}", ino, 0);
+        let mut data = tx.get(key.as_bytes()).unwrap_or_else(|| Vec::new());
+        
+        let offset = offset as usize;
+        let required_len = offset + buf.len();
+        if required_len > data.len() {
+            data.resize(required_len, 0);
+        }
+        data[offset..required_len].copy_from_slice(buf);
+        tx.put(key.as_bytes(), &data).map_err(|_| common::DbfsError::Io)?;
+        
+        self.persist_file_chunk(ino, 0, &data);
+
+        if let Ok(mut attr) = self.get_attr(ino) {
+            attr.size = data.len() as u64;
+            let attr_key = alloc::format!("i:{}", ino);
+            let encoded = attr.serialize();
+            tx.put(attr_key.as_bytes(), &encoded).ok();
+            self.persist_inode(&attr);
+        }
+        
+        tx.commit().map_err(|_| common::DbfsError::Io)?;
+        self.device.flush().ok();
+        Ok(buf.len())
+    }
+
+    pub async fn write_async(&self, ino: usize, buf: &[u8], offset: u64) -> Result<usize, common::DbfsError> {
+        let mut tx = self.db.tx();
+        let key = alloc::format!("f:{}:{}", ino, 0);
+        let mut data = tx.get(key.as_bytes()).unwrap_or_else(|| Vec::new());
+        
+        let offset = offset as usize;
+        let required_len = offset + buf.len();
+        if required_len > data.len() {
+            data.resize(required_len, 0);
+        }
+        data[offset..required_len].copy_from_slice(buf);
+        tx.put(key.as_bytes(), &data).map_err(|_| common::DbfsError::Io)?;
+        
+        self.persist_file_chunk(ino, 0, &data);
+
+        if let Ok(mut attr) = self.get_attr(ino) {
+            attr.size = data.len() as u64;
+            let attr_key = alloc::format!("i:{}", ino);
+            let encoded = attr.serialize();
+            tx.put(attr_key.as_bytes(), &encoded).ok();
+            self.persist_inode(&attr);
+        }
+        
+        tx.commit_async().await.map_err(|_| common::DbfsError::Io)?;
+        self.device.flush().ok();
+        Ok(buf.len())
+    }
+
+    pub fn readdir(&self, ino: usize, entries_out: &mut Vec<file::DirEntry>) -> Result<(), common::DbfsError> {
+        let key = alloc::format!("d:{}", ino);
+        if let Some(data) = self.db.get(key.as_bytes()) {
+             let children: Vec<file::DirEntry> = <Vec<file::DirEntry>>::deserialize(&data).ok_or(common::DbfsError::Io)?;
+             entries_out.extend(children);
+        }
+        Ok(())
+    }
+
+    pub async fn readdir_async(&self, ino: usize, entries_out: &mut Vec<file::DirEntry>) -> Result<(), common::DbfsError> {
+        self.readdir(ino, entries_out)
+    }
+
+    pub fn lookup(&self, parent: usize, name: &str) -> Result<common::DbfsAttr, common::DbfsError> {
+        let key = alloc::format!("d:{}", parent);
+        if let Some(data) = self.db.get(key.as_bytes()) {
+             let children: Vec<file::DirEntry> = <Vec<file::DirEntry>>::deserialize(&data).ok_or(common::DbfsError::Io)?;
+             if let Some(child) = children.iter().find(|c| c.name == name) {
+                 return self.get_attr(child.ino);
              }
-         } else {
-             log::warn!("DBFS: Failed to deserialize Root Inode during recovery.");
-         }
-    } else {
-        log::warn!("DBFS: Failed to read Root Inode block.");
+        }
+        Err(common::DbfsError::NotFound)
+    }
+
+    pub async fn lookup_async(&self, parent: usize, name: &str) -> Result<common::DbfsAttr, common::DbfsError> {
+        self.lookup(parent, name)
+    }
+
+    pub fn get_attr(&self, ino: usize) -> Result<common::DbfsAttr, common::DbfsError> {
+        let key = alloc::format!("i:{}", ino);
+        if let Some(data) = self.db.get(key.as_bytes()) {
+            common::DbfsAttr::deserialize(&data).ok_or(common::DbfsError::Io)
+        } else {
+             Err(common::DbfsError::NotFound)
+        }
+    }
+
+    pub fn create(&self, parent: usize, name: &str, uid: u32, gid: u32, time: common::DbfsTimeSpec, perm: common::DbfsPermission) -> Result<common::DbfsAttr, common::DbfsError> {
+        if self.lookup(parent, name).is_ok() {
+            return Err(common::DbfsError::FileExists);
+        }
+
+        let mut tx = self.db.tx();
+        let ino = self.inode_counter.fetch_add(1, Ordering::SeqCst);
+        let kind = if perm.contains(common::DbfsPermission::S_IFDIR) { 
+            common::DbfsFileType::Directory 
+        } else { 
+            common::DbfsFileType::RegularFile 
+        };
+
+        let attr = common::DbfsAttr {
+            ino,
+            size: 0,
+            perm: perm.bits(),
+            nlink: 1,
+            uid,
+            gid,
+            atime: time,
+            mtime: time,
+            ctime: time,
+            kind: kind.clone(),
+        };
+
+        let attr_key = alloc::format!("i:{}", ino);
+        let encoded = attr.serialize();
+        tx.put(attr_key.as_bytes(), &encoded).map_err(|_| common::DbfsError::Io)?;
+        self.persist_inode(&attr);
+
+        let parent_key = alloc::format!("d:{}", parent);
+        let mut children: Vec<file::DirEntry> = if let Some(data) = tx.get(parent_key.as_bytes()) {
+             <Vec<file::DirEntry>>::deserialize(&data).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        children.push(file::DirEntry { ino, kind, name: String::from(name) });
+        let encoded_children = children.serialize();
+        tx.put(parent_key.as_bytes(), &encoded_children).map_err(|_| common::DbfsError::Io)?;
+        
+        self.persist_file_chunk(parent, 0, &encoded_children); 
+        
+        tx.commit().map_err(|_| common::DbfsError::Io)?;
+        self.device.flush().ok();
+
+        Ok(attr)
+    }
+
+    pub async fn create_async(&self, parent: usize, name: &str, uid: u32, gid: u32, time: common::DbfsTimeSpec, perm: common::DbfsPermission) -> Result<common::DbfsAttr, common::DbfsError> {
+        if self.lookup(parent, name).is_ok() {
+            return Err(common::DbfsError::FileExists);
+        }
+
+        let mut tx = self.db.tx();
+        let ino = self.inode_counter.fetch_add(1, Ordering::SeqCst);
+        let kind = if perm.contains(common::DbfsPermission::S_IFDIR) { 
+            common::DbfsFileType::Directory 
+        } else { 
+            common::DbfsFileType::RegularFile 
+        };
+
+        let attr = common::DbfsAttr {
+            ino,
+            size: 0,
+            perm: perm.bits(),
+            nlink: 1,
+            uid,
+            gid,
+            atime: time,
+            mtime: time,
+            ctime: time,
+            kind: kind.clone(),
+        };
+
+        let attr_key = alloc::format!("i:{}", ino);
+        let encoded = attr.serialize();
+        tx.put(attr_key.as_bytes(), &encoded).map_err(|_| common::DbfsError::Io)?;
+        self.persist_inode(&attr);
+
+        let parent_key = alloc::format!("d:{}", parent);
+        let mut children: Vec<file::DirEntry> = if let Some(data) = tx.get(parent_key.as_bytes()) {
+             <Vec<file::DirEntry>>::deserialize(&data).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        children.push(file::DirEntry { ino, kind, name: String::from(name) });
+        let encoded_children = children.serialize();
+        tx.put(parent_key.as_bytes(), &encoded_children).map_err(|_| common::DbfsError::Io)?;
+        
+        self.persist_file_chunk(parent, 0, &encoded_children); 
+        
+        tx.commit_async().await.map_err(|_| common::DbfsError::Io)?;
+        self.device.flush().ok();
+
+        Ok(attr)
+    }
+
+    pub fn truncate(&self, ino: usize, size: usize) -> Result<(), common::DbfsError> {
+        let mut tx = self.db.tx();
+        let key = alloc::format!("f:{}:{}", ino, 0);
+        let mut data = tx.get(key.as_bytes()).unwrap_or_else(|| Vec::new());
+        if data.len() != size {
+            data.resize(size, 0);
+            tx.put(key.as_bytes(), &data).map_err(|_| common::DbfsError::Io)?;
+            self.persist_file_chunk(ino, 0, &data);
+            
+            if let Ok(mut attr) = self.get_attr(ino) {
+                attr.size = size as u64;
+                let attr_key = alloc::format!("i:{}", ino);
+                let encoded = attr.serialize();
+                tx.put(attr_key.as_bytes(), &encoded).ok();
+                self.persist_inode(&attr);
+            }
+            tx.commit().map_err(|_| common::DbfsError::Io)?;
+            self.device.flush().ok();
+        }
+        Ok(())
+    }
+
+    pub async fn truncate_async(&self, ino: usize, size: usize) -> Result<(), common::DbfsError> {
+        let mut tx = self.db.tx();
+        let key = alloc::format!("f:{}:{}", ino, 0);
+        let mut data = tx.get(key.as_bytes()).unwrap_or_else(|| Vec::new());
+        if data.len() != size {
+            data.resize(size, 0);
+            tx.put(key.as_bytes(), &data).map_err(|_| common::DbfsError::Io)?;
+            self.persist_file_chunk(ino, 0, &data);
+            
+            if let Ok(mut attr) = self.get_attr(ino) {
+                attr.size = size as u64;
+                let attr_key = alloc::format!("i:{}", ino);
+                let encoded = attr.serialize();
+                tx.put(attr_key.as_bytes(), &encoded).ok();
+                self.persist_inode(&attr);
+            }
+            tx.commit_async().await.map_err(|_| common::DbfsError::Io)?;
+            self.device.flush().ok();
+        }
+        Ok(())
     }
 }
-
-
-pub fn init_cache() {}
-
-
-fn get_db() -> &'static Arc<DB> {
-    DB_INSTANCE.get().expect("DBFS not initialized")
-}
-
-fn get_device() -> &'static Arc<dyn BlockDevice> {
-    DISK_DEVICE.get().expect("DBFS Disk not initialized")
-}
-
-// Helper to persist inode to disk
-// Mapping: Inode ID -> Block ID (Simple direct mapping for test: Block = 1024 + InodeID)
-fn persist_inode(attr: &common::DbfsAttr) {
-    let device = get_device();
-    let data = attr.serialize();
-    // Logic: Inodes stored in reserved area or just scattered? 
-    // To satisfy requirement of "persistence", we will write inode to a calculated block.
-    // Let's say Inode 1 is at Block 2000. Inode N at 2000+N.
-    let block_id = 2000 + attr.ino; 
-    let mut sector = [0u8; 512];
-    if data.len() <= 512 {
-        sector[..data.len()].copy_from_slice(&data);
-        // Write to byte offset
-        device.write(&sector, block_id * 512).ok();
-    }
-}
-
-// Helper to persist file data
-// Mapping: File Inode + Chunk -> Block
-fn persist_file_chunk(ino: usize, chunk_id: usize, data: &[u8]) {
-     let device = get_device();
-     // Simple collision-free mapping for demo: 
-     // Block = 10000 + (ino * 100) + chunk_id
-     // Supports 100 blocks (50KB) per file max for this simple layout
-     let block_id = 10000 + (ino * 100) + chunk_id;
-     let mut sector = [0u8; 512];
-     let write_len = core::cmp::min(data.len(), 512);
-     sector[..write_len].copy_from_slice(&data[..write_len]);
-     device.write(&sector, block_id * 512).ok();
-}
-
-
-// Manual serialization helpers
-// (Copied from previous step, assuming layout module is used but for compilation safety creating local trait alias if needed or using layout)
-// We already imported Serializer from layout.
 
 pub mod common {
     use super::*;
@@ -317,7 +552,7 @@ pub mod common {
 
 pub mod file {
     use super::*;
-    use super::common::{DbfsError, DbfsFileType};
+    use super::common::DbfsFileType;
 
     #[derive(Clone)]
     pub struct DirEntry {
@@ -366,160 +601,6 @@ pub mod file {
              Some(entries)
         }
     }
-
-    pub fn dbfs_common_read(ino: usize, buf: &mut [u8], offset: u64) -> Result<usize, DbfsError> {
-        let db = get_db();
-        let key = alloc::format!("f:{}:{}", ino, 0);
-        if let Some(data) = db.get(key.as_bytes()) {
-            let offset = offset as usize;
-            if offset >= data.len() {
-                return Ok(0);
-            }
-            let read_len = core::cmp::min(buf.len(), data.len() - offset);
-            buf[..read_len].copy_from_slice(&data[offset..offset+read_len]);
-            Ok(read_len)
-        } else {
-            Ok(0)
-        }
-    }
-
-    pub fn dbfs_common_write(ino: usize, buf: &[u8], offset: u64) -> Result<usize, DbfsError> {
-        let db = get_db();
-        let key = alloc::format!("f:{}:{}", ino, 0);
-        let mut data = db.get(key.as_bytes()).unwrap_or_else(|| Vec::new());
-        
-        let offset = offset as usize;
-        let required_len = offset + buf.len();
-        if required_len > data.len() {
-            data.resize(required_len, 0);
-        }
-        data[offset..required_len].copy_from_slice(buf);
-        db.put(key.as_bytes(), &data).map_err(|_| DbfsError::Io)?;
-        
-        // PERSISTENCE: Write chunk to disk
-        super::persist_file_chunk(ino, 0, &data); // Simplified 0th chunk
-
-        // Update size & persist inode
-        if let Ok(mut attr) = super::inode::dbfs_common_attr(ino) {
-            attr.size = data.len() as u64;
-            let attr_key = alloc::format!("i:{}", ino);
-            let encoded = attr.serialize();
-             db.put(attr_key.as_bytes(), &encoded).ok();
-             super::persist_inode(&attr);
-             get_device().flush().ok();
-        }
-        Ok(buf.len())
-    }
-
-    pub fn dbfs_common_readdir(ino: usize, entries_out: &mut Vec<DirEntry>, _offset: usize, _all: bool) -> Result<(), DbfsError> {
-        let db = get_db();
-        let key = alloc::format!("d:{}", ino);
-        if let Some(data) = db.get(key.as_bytes()) {
-             let children: Vec<DirEntry> = <Vec<DirEntry>>::deserialize(&data).ok_or(DbfsError::Io)?;
-             entries_out.extend(children);
-        }
-        Ok(())
-    }
-}
-
-pub mod inode {
-    use super::*;
-    use super::common::{DbfsAttr, DbfsError, DbfsTimeSpec, DbfsPermission, DbfsFileType};
-    use super::file::DirEntry;
-
-    pub fn dbfs_common_lookup(parent: usize, name: &str) -> Result<DbfsAttr, DbfsError> {
-        let db = get_db();
-        let key = alloc::format!("d:{}", parent);
-        if let Some(data) = db.get(key.as_bytes()) {
-             let children: Vec<DirEntry> = <Vec<DirEntry>>::deserialize(&data).ok_or(DbfsError::Io)?;
-             if let Some(child) = children.iter().find(|c| c.name == name) {
-                 return dbfs_common_attr(child.ino);
-             }
-        }
-        Err(DbfsError::NotFound)
-    }
-
-    pub fn dbfs_common_attr(ino: usize) -> Result<DbfsAttr, DbfsError> {
-        let db = get_db();
-        let key = alloc::format!("i:{}", ino);
-        if let Some(data) = db.get(key.as_bytes()) {
-            DbfsAttr::deserialize(&data).ok_or(DbfsError::Io)
-        } else {
-             Err(DbfsError::NotFound)
-        }
-    }
-
-    pub fn dbfs_common_create(parent: usize, name: &str, uid: u32, gid: u32, time: DbfsTimeSpec, perm: DbfsPermission, _target: Option<&str>, _rdev: Option<u64>) -> Result<DbfsAttr, DbfsError> {
-        let db = get_db();
-        if dbfs_common_lookup(parent, name).is_ok() {
-            return Err(DbfsError::FileExists);
-        }
-
-        let ino = INODE_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let kind = if perm.contains(DbfsPermission::S_IFDIR) { 
-            DbfsFileType::Directory 
-        } else { 
-            DbfsFileType::RegularFile 
-        };
-
-        let attr = DbfsAttr {
-            ino,
-            size: 0,
-            perm: perm.bits(),
-            nlink: 1,
-            uid,
-            gid,
-            atime: time,
-            mtime: time,
-            ctime: time,
-            kind: kind.clone(),
-        };
-
-        let attr_key = alloc::format!("i:{}", ino);
-        let encoded = attr.serialize();
-        db.put(attr_key.as_bytes(), &encoded).map_err(|_| DbfsError::Io)?;
-        super::persist_inode(&attr); // PERSISTENCE
-
-        let parent_key = alloc::format!("d:{}", parent);
-        let mut children: Vec<DirEntry> = if let Some(data) = db.get(parent_key.as_bytes()) {
-             <Vec<DirEntry>>::deserialize(&data).unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-        children.push(DirEntry { ino, kind, name: String::from(name) });
-        let encoded_children = children.serialize();
-        db.put(parent_key.as_bytes(), &encoded_children).map_err(|_| DbfsError::Io)?;
-        
-        // We persist data for Inode 'parent'.
-        super::persist_file_chunk(parent, 0, &encoded_children); 
-        get_device().flush().ok();
-
-        Ok(attr)
-    }
-
-    pub fn dbfs_common_truncate(_uid: u32, _gid: u32, _ino: usize, _time: DbfsTimeSpec, size: usize) -> Result<(), DbfsError> {
-        let db = get_db();
-        let key = alloc::format!("f:{}:{}", _ino, 0);
-        let mut data = db.get(key.as_bytes()).unwrap_or_else(|| Vec::new());
-        if data.len() != size {
-            data.resize(size, 0);
-            db.put(key.as_bytes(), &data).map_err(|_| DbfsError::Io)?;
-            super::persist_file_chunk(_ino, 0, &data); // PERSISTENCE
-            
-            if let Ok(mut attr) = dbfs_common_attr(_ino) {
-                attr.size = size as u64;
-                let attr_key = alloc::format!("i:{}", _ino);
-                let encoded = attr.serialize();
-                db.put(attr_key.as_bytes(), &encoded).ok();
-                super::persist_inode(&attr); // PERSISTENCE
-            }
-        }
-        Ok(())
-    }
-    
-    pub fn dbfs_common_rmdir(_uid: u32, _gid: u32, _ino: usize, _name: &str, _time: DbfsTimeSpec) -> Result<(), DbfsError> {
-        Ok(())
-    }
 }
 
 pub mod link {
@@ -528,32 +609,6 @@ pub mod link {
         Err(DbfsError::NotSupported)
     }
     pub fn dbfs_common_unlink(_uid: u32, _gid: u32, _parent: usize, _name: &str, _target: Option<&str>, _time: DbfsTimeSpec) -> Result<(), DbfsError> {
-        Ok(())
-    }
-}
-
-pub mod fs_type {
-    use super::*;
-    use super::common::{DbfsError, DbfsTimeSpec, DbfsFileType};
-    pub fn dbfs_common_root_inode(_uid: u32, _gid: u32, _time: DbfsTimeSpec) -> Result<(), DbfsError> {
-         let db = get_db();
-         let attr = super::common::DbfsAttr {
-            ino: 1, 
-            size: 0,
-            perm: 0o777,
-            nlink: 1,
-            uid: 0,
-            gid: 0,
-            atime: _time,
-            mtime: _time,
-            ctime: _time,
-            kind: DbfsFileType::Directory,
-        };
-        let attr_key = alloc::format!("i:1");
-        if db.get(attr_key.as_bytes()).is_none() {
-             let encoded = attr.serialize();
-             db.put(attr_key.as_bytes(), &encoded).ok();
-        }
         Ok(())
     }
 }
@@ -570,3 +625,6 @@ pub mod fuse {
          pub fn init_db(_db: &jammdb::DB, _size: usize) {}
     }
 }
+
+#[cfg(test)]
+mod tests;

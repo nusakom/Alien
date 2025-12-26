@@ -7,12 +7,12 @@ pub const MAGIC: &[u8; 8] = b"ALIENTFS";
 pub const VERSION: u32 = 1;
 pub const BLOCK_SIZE: usize = 512;
 
-pub trait Serializer {
+pub trait Serializer: Sized {
     fn serialize(&self) -> Vec<u8>;
-    fn deserialize(data: &[u8]) -> Option<Self> where Self: Sized;
+    fn deserialize(data: &[u8]) -> Option<Self>;
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Superblock {
     pub magic: [u8; 8],
     pub version: u32,
@@ -24,14 +24,14 @@ pub struct Superblock {
 }
 
 impl Superblock {
-    pub const SIZE: usize = 8 + 4 + 8 * 5; 
+    pub const SIZE: usize = 52; // 8 + 4 + 8*5
 
     pub fn new(root_inode: u64, log_start: u64, log_len: u64, data_start: u64) -> Self {
         Self {
             magic: *MAGIC,
             version: VERSION,
             root_inode,
-            inode_allocator_next: 2, // Start allocation from 2
+            inode_allocator_next: 2,
             log_start_block: log_start,
             log_len_blocks: log_len,
             data_start_block: data_start,
@@ -54,6 +54,7 @@ impl Serializer for Superblock {
 
     fn deserialize(data: &[u8]) -> Option<Self> {
         if data.len() < Self::SIZE { return None; }
+        
         let magic: [u8; 8] = data[0..8].try_into().ok()?;
         if &magic != MAGIC { return None; }
         

@@ -1,8 +1,10 @@
 extern crate alloc;
 use alloc::vec::Vec;
-use ksync::Mutex; 
+#[cfg(target_os = "none")]
+use ksync::Mutex;
+#[cfg(not(target_os = "none"))]
+use spin::Mutex;
 use crate::layout::{WalEntry, WalOp, Serializer, Superblock};
-use jammdb::DB; 
 
 
 // Rough plan:
