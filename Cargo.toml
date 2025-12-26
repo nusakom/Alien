@@ -8,4 +8,7 @@ members = [
     "user/musl/hello",
     "user/musl/async_test",
     "user/musl/ftest",
+    "subsystems/dbfs",
+    "subsystems/dbfs-vfs",
+    "subsystems/jammdb",
 ]

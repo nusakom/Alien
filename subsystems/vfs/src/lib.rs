@@ -13,6 +13,7 @@ use core::ops::Index;
 
 use constants::AlienResult;
 use dynfs::DynFsKernelProvider;
+use dbfs_vfs::{DBFS, SimpleDBFSProvider};
 use ksync::Mutex;
 use spin::{Lazy, Once};
 #[cfg(feature = "ext")]
@@ -108,6 +109,9 @@ fn register_all_fs() {
 
     FS.lock().insert("diskfs".to_string(), diskfs);
 
+    let dbfs = DBFS::new("data", SimpleDBFSProvider);
+    FS.lock().insert("dbfs".to_string(), dbfs);
+
     println!("register fs success");
 }
 
@@ -139,6 +143,25 @@ pub fn init_filesystem() -> AlienResult<()> {
         .clone()
         .i_mount(0, "/dev/shm", None, &[])?;
     path.join("dev/shm")?.mount(shm_ramfs, 0)?;
+
+    ramfs_root.inode()?.create("data", vfscore::utils::VfsNodeType::Dir, vfscore::utils::VfsNodePerm::from_bits_truncate(0o755), None)?;
+    let dbfs = FS.lock().index("dbfs").clone();
+    let dbfs_root = dbfs.i_mount(0, "/data", None, &[])?;
+    path.join("data")?.mount(dbfs_root.clone(), 0)?;
+
+    // Runtime Verification
+    println!("Verifying DBFS integration...");
+    let hello = dbfs_root.inode()?.create("hello", vfscore::utils::VfsNodeType::File, vfscore::utils::VfsNodePerm::from_bits_truncate(0o644), None)?;
+    hello.write_at(0, b"Hello DBFS")?;
+
+    let mut buf = [0u8; 10];
+    hello.read_at(0, &mut buf)?;
+    if &buf == b"Hello DBFS" {
+        println!("DBFS Verification PASSED: Read 'Hello DBFS' successfully");
+    } else {
+        panic!("DBFS Verification FAILED: Expected 'Hello DBFS', got {:?}", buf);
+    }
+
 
     let diskfs = FS.lock().index("diskfs").clone();
     let blk_inode = path

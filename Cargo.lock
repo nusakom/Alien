@@ -662,6 +662,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d7439c3735f405729d52c3fbbe4de140eaf938a1fe47d227c27f8254d4302a5"
 
 [[package]]
+name = "dbfs-vfs"
+version = "0.1.0"
+dependencies = [
+ "constants",
+ "dbfs2",
+ "device_interface",
+ "downcast-rs",
+ "jammdb",
+ "ksync",
+ "lock_api",
+ "log",
+ "spin 0.9.8",
+ "vfscore",
+]
+
+[[package]]
+name = "dbfs2"
+version = "0.1.0"
+dependencies = [
+ "bitflags 1.3.2",
+ "jammdb",
+ "ksync",
+ "log",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "defmt"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -761,7 +788,7 @@ dependencies = [
  "platform",
  "shim",
  "smoltcp",
- "spin 0.9.8",
+ "spin 0.10.0",
  "vfscore",
  "virtio-drivers",
 ]
@@ -813,7 +840,7 @@ dependencies = [
  "platform",
  "rtc",
  "shim",
- "spin 0.9.8",
+ "spin 0.10.0",
  "timer",
  "uart16550",
  "uart8250",
@@ -1518,7 +1545,7 @@ dependencies = [
  "ksync",
  "platform",
  "plic",
- "spin 0.9.8",
+ "spin 0.10.0",
 ]
 
 [[package]]
@@ -1542,6 +1569,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
 dependencies = [
  "either",
+]
+
+[[package]]
+name = "jammdb"
+version = "0.1.0"
+dependencies = [
+ "ksync",
+ "log",
 ]
 
 [[package]]
@@ -1694,9 +1729,9 @@ checksum = "03087c2bad5e1034e8cace5926dec053fb3790248370865f5117a7d0213354c8"
 
 [[package]]
 name = "libc"
-version = "0.2.153"
+version = "0.2.178"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c198f91728a82281a64e1f4f9eeb25d82cb32a5de251c6bd1b5154d63a8e7bd"
+checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
 
 [[package]]
 name = "libflate"
@@ -1931,7 +1966,7 @@ dependencies = [
  "page-table",
  "pager",
  "platform",
- "spin 0.9.8",
+ "spin 0.10.0",
  "talc",
 ]
 
@@ -2387,7 +2422,7 @@ dependencies = [
  "ksync",
  "log",
  "preprint",
- "spin 0.9.8",
+ "spin 0.10.0",
 ]
 
 [[package]]
@@ -2901,7 +2936,7 @@ name = "shim"
 version = "0.1.0"
 dependencies = [
  "downcast-rs",
- "spin 0.9.8",
+ "spin 0.10.0",
 ]
 
 [[package]]
@@ -3710,6 +3745,7 @@ dependencies = [
  "core2",
  "cpio_reader",
  "cty",
+ "dbfs-vfs",
  "devfs",
  "devices",
  "downcast-rs",
@@ -3725,7 +3761,7 @@ dependencies = [
  "printf-compat 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "ramfs",
  "shim",
- "spin 0.9.8",
+ "spin 0.10.0",
  "timer",
  "tinyrlibc",
  "vfscore",

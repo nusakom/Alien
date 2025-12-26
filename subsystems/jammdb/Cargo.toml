@@ -1,0 +1,8 @@
+[package]
+name = "jammdb"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ksync = { path = "../ksync" }
+log = "0.4"
