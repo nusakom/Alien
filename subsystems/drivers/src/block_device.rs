@@ -166,6 +166,13 @@ impl BlockDevice for GenericBlockDevice {
             let cache = cache_lock.get_mut(&page_id).unwrap();
             let copy_len = min(PAGE_CACHE_SIZE - offset, len - count);
             cache[offset..offset + copy_len].copy_from_slice(&buf[count..count + copy_len]);
+
+            let mut dirty = self.dirty.lock();
+            if !dirty.contains(&page_id) {
+                dirty.push(page_id);
+            }
+            drop(dirty);
+
             count += copy_len;
             offset = (offset + copy_len) % PAGE_CACHE_SIZE;
             page_id += 1;
@@ -176,19 +183,19 @@ impl BlockDevice for GenericBlockDevice {
         self.device.capacity() * 512
     }
     fn flush(&self) -> AlienResult<()> {
-        // let mut device = self.device.lock();
-        // let mut lru = self.cache.lock();
-        // self.dirty.lock().iter().for_each(|id|{
-        //     let start = id * PAGE_CACHE_SIZE;
-        //     let start_block = start / 512;
-        //     let end_block = (start + PAGE_CACHE_SIZE) / 512;
-        //     let cache = lru.get(id).unwrap();
-        //     for i in start_block..end_block {
-        //         let target_buf = &cache[(i - start_block) * 512..(i - start_block + 1) * 512];
-        //         device.write_block(i, target_buf).unwrap();
-        //     }
-        // });
-        // self.dirty.lock().clear();
+        let mut cache_lock = self.cache.lock();
+        let mut dirty_lock = self.dirty.lock();
+        for &id in dirty_lock.iter() {
+            if let Some(cache) = cache_lock.get(&id) {
+                let start_block = id * PAGE_CACHE_SIZE / 512;
+                let end_block = start_block + PAGE_CACHE_SIZE / 512;
+                for i in start_block..end_block {
+                    let target_buf = &cache[(i - start_block) * 512..(i - start_block + 1) * 512];
+                    self.device.write_block(i, target_buf).ok();
+                }
+            }
+        }
+        dirty_lock.clear();
         Ok(())
     }
 }

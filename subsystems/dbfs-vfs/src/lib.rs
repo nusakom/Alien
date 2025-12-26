@@ -1,43 +1,34 @@
 #![cfg_attr(not(test), no_std)]
 #![feature(trait_alias)]
 
+#[macro_use]
 extern crate alloc;
+extern crate vfscore;
+extern crate log;
 
-// Add std for DB opening support in this environment
-#[cfg(feature = "fuse")]
-// extern crate std;
+use vfscore::dentry::VfsDentry;
+use vfscore::error::VfsError;
+use vfscore::file::VfsFile;
+use vfscore::fstype::{FileSystemFlags, VfsFsType, VfsMountPoint};
+use vfscore::inode::VfsInode;
+use vfscore::superblock::VfsSuperBlock;
+use vfscore::utils::{VfsFileStat, VfsNodePerm, VfsNodeType, VfsTimeSpec, VfsDirEntry};
+use vfscore::VfsResult;
 
+use dbfs2::init_dbfs;
+use dbfs2::init_cache;
+use dbfs2::common::{DbfsAttr, DbfsError, DbfsTimeSpec, DbfsPermission, DbfsFileType};
+use dbfs2::file::{dbfs_common_read, dbfs_common_write, dbfs_common_readdir};
+use dbfs2::inode::{dbfs_common_lookup, dbfs_common_attr, dbfs_common_create, dbfs_common_truncate, dbfs_common_rmdir};
+use dbfs2::link::{dbfs_common_readlink, dbfs_common_unlink};
+use dbfs2::fs_type::dbfs_common_root_inode;
 
-use alloc::{
-    string::{String, ToString},
-    sync::{Arc, Weak},
-    format,
-    collections::BTreeMap,
-    vec::Vec,
-};
-
-use log::info;
-use vfscore::{
-    dentry::VfsDentry,
-    error::VfsError,
-    file::VfsFile,
-    fstype::{FileSystemFlags, VfsFsType, VfsMountPoint},
-    inode::{VfsInode},
-    superblock::VfsSuperBlock,
-    utils::{VfsFileStat, VfsNodePerm, VfsNodeType, VfsTimeSpec, VfsDirEntry},
-    VfsResult,
-};
-
-use dbfs2::{
-    init_dbfs, init_cache,
-    common::{DbfsAttr, DbfsError, DbfsTimeSpec, DbfsPermission, DbfsFileType},
-    file::{dbfs_common_read, dbfs_common_write, dbfs_common_readdir},
-    inode::{dbfs_common_lookup, dbfs_common_attr, dbfs_common_create, dbfs_common_truncate, dbfs_common_rmdir},
-    link::{dbfs_common_readlink, dbfs_common_unlink},
-    fs_type::dbfs_common_root_inode,
-};
 use jammdb::DB;
 use lock_api::Mutex;
+use devices::BLOCK_DEVICE;
+
+
+
 
 pub trait VfsRawMutex = lock_api::RawMutex + Send + Sync;
 
@@ -47,41 +38,45 @@ pub struct DBFSDentry<R: VfsRawMutex> {
 }
 
 struct DBFSDentryInner<R: VfsRawMutex> {
-    parent: Weak<dyn VfsDentry>,
-    inode: Arc<dyn VfsInode>,
-    name: String,
+    parent: alloc::sync::Weak<dyn VfsDentry>,
+    inode: alloc::sync::Arc<dyn VfsInode>,
+    name: alloc::string::String,
     mnt: Option<VfsMountPoint>,
-    children: Option<BTreeMap<String, Arc<DBFSDentry<R>>>>,
+    children: Option<alloc::collections::BTreeMap<alloc::string::String, alloc::sync::Arc<DBFSDentry<R>>>>,
 }
 
+
+
+
 impl<R: VfsRawMutex + 'static> DBFSDentry<R> {
-    pub fn root(inode: Arc<dyn VfsInode>, parent: Weak<dyn VfsDentry>) -> Self {
+    pub fn root(inode: alloc::sync::Arc<dyn VfsInode>, parent: alloc::sync::Weak<dyn VfsDentry>) -> Self {
         Self {
             inner: Mutex::new(DBFSDentryInner {
                 parent,
                 inode,
-                name: "/".to_string(),
+                name: alloc::string::ToString::to_string("/"),
+
                 mnt: None,
-                children: Some(BTreeMap::new()),
+                children: Some(alloc::collections::BTreeMap::new()),
             }),
         }
     }
 }
 
 impl<R: VfsRawMutex + 'static> VfsDentry for DBFSDentry<R> {
-    fn name(&self) -> String {
+    fn name(&self) -> alloc::string::String {
         self.inner.lock().name.clone()
     }
 
     fn to_mount_point(
-        self: Arc<Self>,
-        sub_fs_root: Arc<dyn VfsDentry>,
+        self: alloc::sync::Arc<Self>,
+        sub_fs_root: alloc::sync::Arc<dyn VfsDentry>,
         mount_flag: u32,
     ) -> VfsResult<()> {
-        let point = self.clone() as Arc<dyn VfsDentry>;
+        let point = self.clone() as alloc::sync::Arc<dyn VfsDentry>;
         let mnt = VfsMountPoint {
             root: sub_fs_root,
-            mount_point: Arc::downgrade(&point),
+            mount_point: alloc::sync::Arc::downgrade(&point),
             mnt_flags: mount_flag,
         };
         if let Ok(p) = point.downcast_arc::<DBFSDentry<R>>() {
@@ -93,7 +88,7 @@ impl<R: VfsRawMutex + 'static> VfsDentry for DBFSDentry<R> {
         }
     }
 
-    fn inode(&self) -> VfsResult<Arc<dyn VfsInode>> {
+    fn inode(&self) -> VfsResult<alloc::sync::Arc<dyn VfsInode>> {
         Ok(self.inner.lock().inode.clone())
     }
 
@@ -105,59 +100,61 @@ impl<R: VfsRawMutex + 'static> VfsDentry for DBFSDentry<R> {
         self.inner.lock().mnt = None;
     }
 
-    fn find(&self, path: &str) -> Option<Arc<dyn VfsDentry>> {
+    fn find(&self, path: &str) -> Option<alloc::sync::Arc<dyn VfsDentry>> {
         let inner = self.inner.lock();
         inner.children.as_ref().and_then(|c| {
-            c.get(path).map(|item| item.clone() as Arc<dyn VfsDentry>)
+            c.get(path).map(|item| item.clone() as alloc::sync::Arc<dyn VfsDentry>)
         })
     }
 
     fn insert(
-        self: Arc<Self>,
+        self: alloc::sync::Arc<Self>,
         name: &str,
-        child: Arc<dyn VfsInode>,
-    ) -> VfsResult<Arc<dyn VfsDentry>> {
+        child: alloc::sync::Arc<dyn VfsInode>,
+    ) -> VfsResult<alloc::sync::Arc<dyn VfsDentry>> {
         let inode_type = child.inode_type();
-        let child_dentry = Arc::new(DBFSDentry {
+        let child_dentry = alloc::sync::Arc::new(DBFSDentry {
             inner: Mutex::new(DBFSDentryInner {
-                parent: Arc::downgrade(&(self.clone() as Arc<dyn VfsDentry>)),
+                parent: alloc::sync::Arc::downgrade(&(self.clone() as alloc::sync::Arc<dyn VfsDentry>)),
                 inode: child,
-                name: name.to_string(),
+                name: alloc::string::ToString::to_string(name),
+
                 mnt: None,
                 children: match inode_type {
-                    VfsNodeType::Dir => Some(BTreeMap::new()),
+                    VfsNodeType::Dir => Some(alloc::collections::BTreeMap::new()),
                     _ => None,
                 },
             }),
         });
         let mut inner = self.inner.lock();
         if inner.children.is_none() {
-            inner.children = Some(BTreeMap::new());
+            inner.children = Some(alloc::collections::BTreeMap::new());
         }
         inner
             .children
             .as_mut()
             .unwrap()
-            .insert(name.to_string(), child_dentry.clone())
-            .map_or(Ok(child_dentry as Arc<dyn VfsDentry>), |_| Err(VfsError::EExist))
+            .insert(alloc::string::ToString::to_string(name), child_dentry.clone())
+
+            .map_or(Ok(child_dentry as alloc::sync::Arc<dyn VfsDentry>), |_| Err(VfsError::EExist))
     }
 
-    fn remove(&self, name: &str) -> Option<Arc<dyn VfsDentry>> {
+    fn remove(&self, name: &str) -> Option<alloc::sync::Arc<dyn VfsDentry>> {
         let mut inner = self.inner.lock();
         inner
             .children
             .as_mut()
             .and_then(|c| c.remove(name))
-            .map(|x| x as Arc<dyn VfsDentry>)
+            .map(|x| x as alloc::sync::Arc<dyn VfsDentry>)
     }
 
-    fn parent(&self) -> Option<Arc<dyn VfsDentry>> {
+    fn parent(&self) -> Option<alloc::sync::Arc<dyn VfsDentry>> {
         self.inner.lock().parent.upgrade()
     }
 
-    fn set_parent(&self, parent: &Arc<dyn VfsDentry>) {
+    fn set_parent(&self, parent: &alloc::sync::Arc<dyn VfsDentry>) {
         let mut inner = self.inner.lock();
-        inner.parent = Arc::downgrade(parent);
+        inner.parent = alloc::sync::Arc::downgrade(parent);
     }
 }
 
@@ -171,13 +168,16 @@ pub struct DBFSFs<T: Send + Sync> {
 
 impl<T: DBFSProvider + 'static> DBFSFs<T> {
     pub fn new_fs(provider: T, db: DB) -> Self {
-        #[cfg(feature = "fuse")]
-        {
-             use dbfs2::fuse::mkfs::init_db;
-             init_db(&db, 1024 * 1024 * 1024 * 20); 
+
+        // Retrieve global block device
+        if let Some(device) = BLOCK_DEVICE.get() {
+            init_dbfs(db, device.clone());
+        } else {
+             // Fallback/Panic
+             panic!("DBFS requires a BlockDevice to be initialized!");
         }
-        
-        init_dbfs(db);
+
+
         init_cache();
         
         dbfs_common_root_inode(0, 0, DbfsTimeSpec::default()).expect("Failed to create DBFS root inode");
@@ -185,22 +185,16 @@ impl<T: DBFSProvider + 'static> DBFSFs<T> {
         Self { provider }
     }
 
-    pub fn new(db_name: &str, provider: T) -> Arc<Self> {
+    pub fn new(db_name: &str, provider: T) -> alloc::sync::Arc<Self> {
         let db_path = format!("/tmp/{}.db", db_name);
         const FILE_SIZE: usize = 1024 * 1024 * 1024 * 20;
         
-        #[cfg(feature = "fuse")]
-        {
-            use dbfs2::fuse::mkfs::{FakeMMap, FakePath, MyOpenOptions};
-            let db = jammdb::DB::open(
-                Arc::new(FakeMMap), 
-                FakePath::new(&db_path)
-            ).expect("Failed to open DBFS database");
-            Arc::new(Self::new_fs(provider, db))
-        }
-        
-        #[cfg(not(feature = "fuse"))]
-        unimplemented!("DBFS integration requires 'fuse' feature for DB opening in this environment");
+
+        // For no_std, we use in-memory DB backed by Disk
+        // DB::open arguments are dummy for in-memory impl
+        let db = jammdb::DB::open((), ()).unwrap();
+        alloc::sync::Arc::new(Self::new_fs(provider, db))
+
     }
 }
 
@@ -219,21 +213,22 @@ pub type DBFS = DBFSFs<SimpleDBFSProvider>;
 
 impl<T: DBFSProvider + 'static> VfsFsType for DBFSFs<T> {
     fn mount(
-        self: Arc<Self>,
+        self: alloc::sync::Arc<Self>,
         _flags: u32,
         _ab_mnt: &str,
-        _dev: Option<Arc<dyn VfsInode>>,
+        _dev: Option<alloc::sync::Arc<dyn VfsInode>>,
         _data: &[u8],
-    ) -> VfsResult<Arc<dyn VfsDentry>> {
-        info!("Mounting DBFS via VFS adapter");
+    ) -> VfsResult<alloc::sync::Arc<dyn VfsDentry>> {
+        log::info!("Mounting DBFS via VFS adapter");
+
         
-        let root_inode = Arc::new(DBFSInodeAdapter::new(1));
-        let parent = Weak::<DBFSDentry<spin::Mutex<()>>>::new();
-        let root_dentry = Arc::new(DBFSDentry::<spin::Mutex<()>>::root(root_inode, parent));
-        Ok(root_dentry as Arc<dyn VfsDentry>)
+        let root_inode = alloc::sync::Arc::new(DBFSInodeAdapter::new(1));
+        let parent = alloc::sync::Weak::<DBFSDentry<spin::Mutex<()>>>::new();
+        let root_dentry = alloc::sync::Arc::new(DBFSDentry::<spin::Mutex<()>>::root(root_inode, parent));
+        Ok(root_dentry as alloc::sync::Arc<dyn VfsDentry>)
     }
 
-    fn kill_sb(&self, _sb: Arc<dyn VfsSuperBlock>) -> VfsResult<()> {
+    fn kill_sb(&self, _sb: alloc::sync::Arc<dyn VfsSuperBlock>) -> VfsResult<()> {
         Ok(())
     }
 
@@ -241,8 +236,9 @@ impl<T: DBFSProvider + 'static> VfsFsType for DBFSFs<T> {
         FileSystemFlags::empty()
     }
 
-    fn fs_name(&self) -> String {
-        "dbfs".to_string()
+    fn fs_name(&self) -> alloc::string::String {
+        alloc::string::ToString::to_string("dbfs")
+
     }
 }
 
@@ -311,7 +307,7 @@ impl VfsFile for DBFSInodeAdapter {
     }
 
     fn readdir(&self, index: usize) -> VfsResult<Option<VfsDirEntry>> {
-        let mut entries = Vec::new();
+        let mut entries = alloc::vec::Vec::new();
         match dbfs_common_readdir(self.ino, &mut entries, 0, false) {
             Ok(_) => {
                 if index < entries.len() {
@@ -343,7 +339,7 @@ impl VfsInode for DBFSInodeAdapter {
         ty: VfsNodeType,
         perm: VfsNodePerm,
         _rdev: Option<u64>,
-    ) -> VfsResult<Arc<dyn VfsInode>> {
+    ) -> VfsResult<alloc::sync::Arc<dyn VfsInode>> {
         let permission = match ty {
             VfsNodeType::Dir => DbfsPermission::S_IFDIR | DbfsPermission::from_bits_truncate(perm.bits()),
             VfsNodeType::File => DbfsPermission::S_IFREG | DbfsPermission::from_bits_truncate(perm.bits()),
@@ -356,13 +352,13 @@ impl VfsInode for DBFSInodeAdapter {
         };
         
         dbfs_common_create(self.ino, name, 0, 0, DbfsTimeSpec::default(), permission, None, None)
-            .map(|attr| Arc::new(DBFSInodeAdapter::new(attr.ino)) as Arc<dyn VfsInode>)
+            .map(|attr| alloc::sync::Arc::new(DBFSInodeAdapter::new(attr.ino)) as alloc::sync::Arc<dyn VfsInode>)
             .map_err(from_dbfs_error)
     }
 
-    fn lookup(&self, name: &str) -> VfsResult<Arc<dyn VfsInode>> {
+    fn lookup(&self, name: &str) -> VfsResult<alloc::sync::Arc<dyn VfsInode>> {
         dbfs_common_lookup(self.ino, name)
-            .map(|attr| Arc::new(DBFSInodeAdapter::new(attr.ino)) as Arc<dyn VfsInode>)
+            .map(|attr| alloc::sync::Arc::new(DBFSInodeAdapter::new(attr.ino)) as alloc::sync::Arc<dyn VfsInode>)
             .map_err(from_dbfs_error)
     }
 
@@ -391,10 +387,10 @@ impl VfsInode for DBFSInodeAdapter {
         }
     }
 
-    fn symlink(&self, name: &str, target: &str) -> VfsResult<Arc<dyn VfsInode>> {
+    fn symlink(&self, name: &str, target: &str) -> VfsResult<alloc::sync::Arc<dyn VfsInode>> {
         let permission = DbfsPermission::S_IFLNK | DbfsPermission::from_bits_truncate(0o755);
         dbfs_common_create(self.ino, name, 0, 0, DbfsTimeSpec::default(), permission, Some(target), None)
-            .map(|attr| Arc::new(DBFSInodeAdapter::new(attr.ino)) as Arc<dyn VfsInode>)
+            .map(|attr| alloc::sync::Arc::new(DBFSInodeAdapter::new(attr.ino)) as alloc::sync::Arc<dyn VfsInode>)
             .map_err(from_dbfs_error)
     }
 

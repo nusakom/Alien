@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 ksync = { path = "../ksync" }
 log = "0.4"
+device_interface = { path = "../device_interface" }
+constants = { path = "../constants" }
+

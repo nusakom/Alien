@@ -76,7 +76,8 @@ endif
 
 ifeq ($(NET),y)
 QEMU_ARGS += -device virtio-net-device,netdev=net0 \
-			 -netdev user,id=net0,hostfwd=tcp::5555-:5555,hostfwd=udp::5555-:5555
+			 -netdev user,id=net0,hostfwd=tcp::5557-:5555,hostfwd=udp::5557-:5555
+
 endif
 
 

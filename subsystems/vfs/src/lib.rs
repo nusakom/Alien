@@ -151,9 +151,35 @@ pub fn init_filesystem() -> AlienResult<()> {
 
     // Runtime Verification
     println!("Verifying DBFS integration...");
-    let hello = dbfs_root.inode()?.create("hello", vfscore::utils::VfsNodeType::File, vfscore::utils::VfsNodePerm::from_bits_truncate(0o644), None)?;
-    hello.write_at(0, b"Hello DBFS")?;
 
+    // Persistence Test: Check if "persist_test" exists
+    match dbfs_root.inode()?.lookup("persist_test") {
+        Ok(file) => {
+             println!("DBFS: Found 'persist_test' from previous run. Verifying data...");
+             let mut buf = [0u8; 15];
+             if file.read_at(0, &mut buf).is_ok() {
+                  if &buf == b"Persistent Data" {
+                      println!("DBFS Persistence Verification PASSED!");
+                  } else {
+                      println!("DBFS Persistence Verification FAILED: Content mismatch: {:?}", buf);
+                  }
+             }
+        },
+        Err(_) => {
+             println!("DBFS: 'persist_test' not found. Creating for next run...");
+             if let Ok(file) = dbfs_root.inode()?.create("persist_test", vfscore::utils::VfsNodeType::File, vfscore::utils::VfsNodePerm::from_bits_truncate(0o644), None) {
+                 file.write_at(0, b"Persistent Data").ok();
+                 println!("DBFS: Created 'persist_test'.");
+             }
+        }
+    }
+
+    let hello = match dbfs_root.inode()?.lookup("hello") {
+        Ok(node) => node,
+        Err(_) => dbfs_root.inode()?.create("hello", vfscore::utils::VfsNodeType::File, vfscore::utils::VfsNodePerm::from_bits_truncate(0o644), None)?
+    };
+    
+    hello.write_at(0, b"Hello DBFS")?;
     let mut buf = [0u8; 10];
     hello.read_at(0, &mut buf)?;
     if &buf == b"Hello DBFS" {
@@ -163,15 +189,16 @@ pub fn init_filesystem() -> AlienResult<()> {
     }
 
 
-    let diskfs = FS.lock().index("diskfs").clone();
-    let blk_inode = path
-        .join("/dev/sda")?
-        .open(None)
-        .expect("open /dev/sda failed")
-        .inode()?;
 
-    let diskfs_root = diskfs.i_mount(0, "/tests", Some(blk_inode), &[])?;
-    path.join("tests")?.mount(diskfs_root, 0)?;
+    // let diskfs = FS.lock().index("diskfs").clone();
+    // let blk_inode = path
+    //     .join("/dev/sda")?
+    //     .open(None)
+    //     .expect("open /dev/sda failed")
+    //     .inode()?;
+
+    // let diskfs_root = diskfs.i_mount(0, "/tests", Some(blk_inode), &[])?;
+    // path.join("tests")?.mount(diskfs_root, 0)?;
     println!("mount fs success");
 
     vfscore::path::print_fs_tree(&mut VfsOutPut, ramfs_root.clone(), "".to_string(), false)

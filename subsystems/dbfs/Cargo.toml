@@ -9,7 +9,10 @@ jammdb = { path = "../jammdb" }
 log = "0.4"
 ksync = { path = "../../subsystems/ksync" }
 spin = "0.9"
+device_interface = { path = "../device_interface" }
+
 
 [features]
 fuse = []
+
 

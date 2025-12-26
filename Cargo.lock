@@ -666,8 +666,10 @@ name = "dbfs-vfs"
 version = "0.1.0"
 dependencies = [
  "constants",
+ "core2",
  "dbfs2",
  "device_interface",
+ "devices",
  "downcast-rs",
  "jammdb",
  "ksync",
@@ -682,6 +684,7 @@ name = "dbfs2"
 version = "0.1.0"
 dependencies = [
  "bitflags 1.3.2",
+ "device_interface",
  "jammdb",
  "ksync",
  "log",
@@ -1575,6 +1578,8 @@ dependencies = [
 name = "jammdb"
 version = "0.1.0"
 dependencies = [
+ "constants",
+ "device_interface",
  "ksync",
  "log",
 ]
