@@ -125,22 +125,20 @@ compile:
 		$(KERNEL_LIB)
 	@echo "Generating kernel symbols at $@"
 	@nm -n -C $(KERNEL_FILE) | grep ' [Tt] ' | grep -v '\.L' | grep -v '$$x' | RUSTFLAGS= gen_ksym > kallsyms
-	@make copy_kallsyms
 
 	@#$(OBJCOPY) $(KERNEL_FILE) --strip-all -O binary $(KERNEL_BIN)
 	@cp $(KERNEL_FILE) ./kernel-qemu
 
 
 copy_kallsyms:
-	@-sudo umount $(FSMOUNT)
-	@-sudo rm -rf $(FSMOUNT)
-	@-mkdir $(FSMOUNT)
+	@echo "copying kallsyms to /tests"
+	@-mkdir -p $(FSMOUNT)
 	@sudo mount $(IMG) $(FSMOUNT)
-	@echo "copying kallsyms"
-	sudo cp kallsyms $(FSMOUNT)/kallsyms
-	@echo "copying kallsyms done"
-	@make unmount
+	@sudo mkdir -p $(FSMOUNT)/tests
+	@sudo cp kallsyms $(FSMOUNT)/tests/kallsyms
+	@sudo umount $(FSMOUNT)
 	@rm kallsyms
+	@echo "kallsyms copied successfully"
 
 initramfs:
 	make -C tools/initrd
@@ -155,7 +153,7 @@ user:
 sdcard:$(FS) mount testelf user initramfs
 	@make unmount
 
-run:sdcard install compile
+run:sdcard install compile copy_kallsyms
 	@echo qemu booot $(SMP)
 	$(call boot_qemu)
 	@#rm ./kernel-qemu

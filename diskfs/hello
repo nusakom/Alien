@@ -1,0 +1,1 @@
+/tests/lmbench_all hello "$@"
