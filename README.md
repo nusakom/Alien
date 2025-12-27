@@ -62,7 +62,7 @@
 1. QEMU 7.0.0+
 2. Rust nightly
 3. riscv64-linux-musl [工具链](https://musl.cc/)
-
+4.一件部署脚本:https://github.com/nusakom/Alienos-Environment.git
 参考：[ArceOS Tutorial](https://rcore-os.cn/arceos-tutorial-book/ch01-02.html)
 
 ### 运行系统
@@ -140,15 +140,3 @@ make gdb-client
 - [rCore-Tutorial-v3](http://rcore-os.cn/rCore-Tutorial-Book-v3/)
 - [Maturin](https://gitlab.eduxiji.net/scPointer/maturin)
 - [Redox OS](https://gitlab.redox-os.org/redox-os/)
-
----
-
-## 项目状态
-
-**主线开发**: 持续维护  
-**DBFS 研究**: 已完成阶段性成果 (2025-12-27)
-
----
-
-**License**: 见 LICENSE 文件  
-**维护者**: Alien OS Team
