@@ -1,4 +1,5 @@
 #![no_std]
+#[macro_use]
 extern crate alloc;
 
 use alloc::vec::Vec;
@@ -11,32 +12,44 @@ use spin::Mutex;
 use jammdb::DB;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use device_interface::BlockDevice;
-use crate::layout::{Serializer, Superblock, MAGIC};
+use crate::layout::{Serializer, Superblock, MAGIC, WalOp};
 use crate::common::*;
+use crate::wal::WalManager;
 
 pub mod layout;
-pub mod wal; // We'll skip complex WAL logic for this step to focus on basic persistence
+pub mod wal;
 
 pub struct Dbfs {
     db: Arc<DB>,
     device: Arc<dyn BlockDevice>,
     inode_counter: AtomicUsize,
     block_allocator: AtomicUsize,
+    wal: Arc<WalManager>,
 }
 
 impl Dbfs {
     pub fn new(db: DB, device: Arc<dyn BlockDevice>) -> Arc<Self> {
+        // Default SB for new Dbfs wrapper, will be overwritten if disk exists
+        let sb = Superblock::new(1, 1, 1023, 1024);
+        let wal = Arc::new(WalManager::new(sb));
+        
+        // This is a bit of a chicken-and-egg for WAL init if we don't know SB yet.
+        // Simplified: Assume fixed layout or read first.
+
+        let mut buf = [0u8; 512];
+        let exists = if device.read(&mut buf, 0).is_ok() {
+            &buf[0..8] == MAGIC
+        } else { false };
+
         let dbfs = Arc::new(Self {
             db: Arc::new(db),
             device: device.clone(),
             inode_counter: AtomicUsize::new(2),
             block_allocator: AtomicUsize::new(1024),
+            wal: wal.clone(),
         });
 
-        // Initialize Superblock on disk if not present
-        let mut buf = [0u8; 512];
-        if device.read(&mut buf, 0).is_ok() {
-            if &buf[0..8] != MAGIC {
+        if !exists {
                 // Format disk
                 log::info!("DBFS: Formatting disk...");
                 let sb = Superblock::new(1, 1, 1023, 1024);
@@ -65,72 +78,106 @@ impl Dbfs {
                 
                 dbfs.persist_inode(&root_attr);
                 device.flush().ok();
-            } else {
+        } else {
                 log::info!("DBFS: Mounted existing filesystem. Recovering state...");
+                // Recover from WAL first to replay recent transactions
+                dbfs.wal.recover(device.as_ref(), &dbfs.db);
+                // Then recover filesystem metadata recursively
                 dbfs.recover_fs();
-            }
         }
         dbfs
     }
 
     fn recover_fs(&self) {
-        log::info!("DBFS: Recovery started.");
-        let mut sector = [0u8; 512];
+        log::info!("DBFS: Recovery started (recursive).");
+        // Start recursive recovery from root inode (1)
+        if let Err(_) = self.recover_dir(1) {
+            log::error!("DBFS: Recursive recovery failed");
+        }
+    }
 
-        // 1. Recover Root Inode (Ino 1) -> Block 2001
-        if self.device.read(&mut sector, 2001 * 512).is_ok() {
-            if let Some(root_attr) = common::DbfsAttr::deserialize(&sector) {
-                let mut tx = self.db.tx();
-                let key = alloc::format!("i:1");
-                tx.put(key.as_bytes(), &root_attr.serialize()).ok();
-                log::info!("DBFS: Recovered Root Inode.");
+    // Recursive directory recovery
+    fn recover_dir(&self, ino: usize) -> Result<(), DbfsError> {
+        log::info!("DBFS: Recovering directory ino={}", ino);
+        
+        // 1. Recover inode metadata (block 2000 + ino)
+        let mut inode_sector = [0u8; 512];
+        if self.device.read(&mut inode_sector, (2000 + ino) * 512).is_err() {
+            return Err(DbfsError::Io);
+        }
+        
+        let attr = common::DbfsAttr::deserialize(&inode_sector)
+            .ok_or(DbfsError::Io)?;
+        
+        let mut tx = self.db.tx();
+        let key = alloc::format!("i:{}", ino);
+        tx.put(key.as_bytes(), &attr.serialize()).ok();
+        
+        // Update inode counter if needed
+        let cur = self.inode_counter.load(Ordering::SeqCst);
+        if ino + 1 > cur {
+            self.inode_counter.store(ino + 1, Ordering::SeqCst);
+        }
 
-                // 2. Recover Root Data (Children) -> Block 10100
-                if self.device.read(&mut sector, 10100 * 512).is_ok() {
-                    if let Some(children) = <alloc::vec::Vec<file::DirEntry>>::deserialize(&sector) {
-                        let d_key = alloc::format!("d:1");
-                        tx.put(d_key.as_bytes(), &children.serialize()).ok();
-                        log::info!("DBFS: Recovered Root Children List ({} entries).", children.len());
+        // 2. Recover directory entries - prefer DB (WAL) over disk
+        let d_key = alloc::format!("d:{}", ino);
+        let children = if let Some(db_data) = self.db.get(d_key.as_bytes()) {
+            // WAL has already restored this directory, use that data
+            log::info!("DBFS: Using WAL-recovered data for dir ino={}", ino);
+            <Vec<file::DirEntry>>::deserialize(&db_data).unwrap_or_default()
+        } else {
+            // Read from disk (block 10000 + ino*100)
+            let data_block = 10000 + (ino * 100);
+            let mut dir_sector = [0u8; 512];
+            if self.device.read(&mut dir_sector, data_block * 512).is_err() {
+                tx.commit().ok();
+                return Ok(()); // Not a directory or no data
+            }
+            
+            if let Some(disk_children) = <Vec<file::DirEntry>>::deserialize(&dir_sector) {
+                // Store in DB for future use
+                tx.put(d_key.as_bytes(), &disk_children.serialize()).ok();
+                disk_children
+            } else {
+                tx.commit().ok();
+                return Ok(());
+            }
+        };
+        
+        tx.commit().ok();
 
-                        let mut max_ino = 1;
-
-                        // 3. Recover Children
-                        for child in children {
-                            log::info!("DBFS: Recovering child: {}", child.name);
-                            let child_ino = child.ino;
-                            if child_ino > max_ino { max_ino = child_ino; }
-
-                            // Recover Inode -> Block 2000 + ino
-                            let mut child_sector = [0u8; 512];
-                            if self.device.read(&mut child_sector, (2000 + child_ino) * 512).is_ok() {
-                                if let Some(child_attr) = common::DbfsAttr::deserialize(&child_sector) {
-                                    let c_key = alloc::format!("i:{}", child_ino);
-                                    tx.put(c_key.as_bytes(), &child_attr.serialize()).ok();
-
-                                    // Recover Data (Chunk 0) -> Block 10000 + ino*100
-                                    let data_block = 10000 + (child_ino * 100);
-                                    let mut data_sector = [0u8; 512];
-                                    if self.device.read(&mut data_sector, data_block * 512).is_ok() {
-                                        let size = child_attr.size as usize;
-                                        let read_len = core::cmp::min(size, 512);
-                                        let f_key = alloc::format!("f:{}:0", child_ino);
-                                        tx.put(f_key.as_bytes(), &data_sector[..read_len]).ok();
-                                    }
+        // Recurse into subdirectories and recover files
+        for child in children {
+                match child.kind {
+                    DbfsFileType::Directory => {
+                        // Recursive call for subdirectory
+                        self.recover_dir(child.ino)?;
+                    }
+                    _ => {
+                        // Recover file inode
+                        let mut file_inode_sector = [0u8; 512];
+                        if self.device.read(&mut file_inode_sector, (2000 + child.ino) * 512).is_ok() {
+                            if let Some(file_attr) = common::DbfsAttr::deserialize(&file_inode_sector) {
+                                let mut ftx = self.db.tx();
+                                let fkey = alloc::format!("i:{}", child.ino);
+                                ftx.put(fkey.as_bytes(), &file_attr.serialize()).ok();
+                                
+                                // Recover file data (first chunk)
+                                let file_block = 10000 + (child.ino * 100);
+                                let mut file_sector = [0u8; 512];
+                                if self.device.read(&mut file_sector, file_block * 512).is_ok() {
+                                    let size = core::cmp::min(file_attr.size as usize, 512);
+                                    let f_key = alloc::format!("f:{}:0", child.ino);
+                                    ftx.put(f_key.as_bytes(), &file_sector[..size]).ok();
                                 }
+                                ftx.commit().ok();
                             }
                         }
-                        // Commit all recovered metadata
-                        tx.commit().ok();
-                        // Sync Inode Counter
-                        self.inode_counter.store(max_ino + 1, Ordering::SeqCst);
                     }
                 }
-            } else {
-                log::warn!("DBFS: Failed to deserialize Root Inode during recovery.");
             }
-        } else {
-            log::warn!("DBFS: Failed to read Root Inode block.");
-        }
+        
+        Ok(())
     }
 
     fn persist_inode(&self, attr: &common::DbfsAttr) {
@@ -402,6 +449,71 @@ impl Dbfs {
             tx.commit_async().await.map_err(|_| common::DbfsError::Io)?;
             self.device.flush().ok();
         }
+        Ok(())
+    }
+    pub fn rename(&self, old_parent: usize, old_name: &str, new_parent: usize, new_name: &str) -> Result<(), common::DbfsError> {
+        let mut tx = self.db.tx();
+        
+        // 1. Load Old Parent
+        let old_p_key = alloc::format!("d:{}", old_parent);
+        let old_data = tx.get(old_p_key.as_bytes()).ok_or(common::DbfsError::NotFound)?;
+        let mut old_children = <Vec<file::DirEntry>>::deserialize(&old_data).ok_or(common::DbfsError::Io)?;
+        
+        // 2. Find and Remove Entry
+        let idx = old_children.iter().position(|e| e.name == old_name).ok_or(common::DbfsError::NotFound)?;
+        let entry = old_children.remove(idx);
+        
+        // 3. Update entry name
+        let mut new_entry = entry.clone();
+        new_entry.name = String::from(new_name);
+
+        // 4. Handle Case: Single Directory Rename (Atomic by default if 1 block)
+        if old_parent == new_parent {
+            if old_children.iter().any(|e| e.name == new_name) {
+                return Err(common::DbfsError::FileExists);
+            }
+            old_children.push(new_entry);
+            let encoded = old_children.serialize();
+            tx.put(old_p_key.as_bytes(), &encoded).map_err(|_| common::DbfsError::Io)?;
+            self.persist_file_chunk(old_parent, 0, &encoded);
+        } else {
+            // 5. Handle Cross-Directory Rename (Secure WAL)
+            
+            let tx_id = 999; // Simple Transaction ID for proof-of-concept
+
+            // A. Update Old Parent (Remove)
+            let encoded_old = old_children.serialize();
+            tx.put(old_p_key.as_bytes(), &encoded_old).map_err(|_| common::DbfsError::Io)?;
+            self.wal.append(tx_id, WalOp::Put, old_p_key.as_bytes(), &encoded_old);
+            
+            // B. Load New Parent
+            let new_p_key = alloc::format!("d:{}", new_parent);
+            let mut new_children = if let Some(data) = tx.get(new_p_key.as_bytes()) {
+                 <Vec<file::DirEntry>>::deserialize(&data).unwrap_or_default()
+            } else {
+                 Vec::new() 
+            };
+            
+            if new_children.iter().any(|e| e.name == new_name) {
+                 return Err(common::DbfsError::FileExists);
+            }
+            
+            new_children.push(new_entry);
+            let encoded_new = new_children.serialize();
+            tx.put(new_p_key.as_bytes(), &encoded_new).map_err(|_| common::DbfsError::Io)?;
+            self.wal.append(tx_id, WalOp::Put, new_p_key.as_bytes(), &encoded_new);
+            
+            // C. WAL Commit & Sync (The Atomic Point)
+            self.wal.append(tx_id, WalOp::Commit, &[], &[]);
+            self.wal.sync(self.device.as_ref()).map_err(|_| common::DbfsError::Io)?;
+
+            // D. Checkpoint to Data Area (Lazy / Behind WAL)
+            self.persist_file_chunk(old_parent, 0, &encoded_old);
+            self.persist_file_chunk(new_parent, 0, &encoded_new);
+        }
+        
+        tx.commit().map_err(|_| common::DbfsError::Io)?;
+        // self.device.flush().ok(); // handled by sync
         Ok(())
     }
 }

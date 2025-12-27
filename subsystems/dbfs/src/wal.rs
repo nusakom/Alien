@@ -1,17 +1,11 @@
-extern crate alloc;
 use alloc::vec::Vec;
 #[cfg(target_os = "none")]
 use ksync::Mutex;
 #[cfg(not(target_os = "none"))]
 use spin::Mutex;
 use crate::layout::{WalEntry, WalOp, Serializer, Superblock};
-
-
-// Rough plan:
-// - Keep a buffer of pending logs
-// - On commit/sync, write to disk area
-// - For now, we interact with the `DB` trait, but ideally we should talk to `BlockDevice`
-// - Refactoring plan: `DB` trait implementation in `jammdb` will eventually use this `WAL` to persist to `BlockDevice`.
+use device_interface::BlockDevice;
+use jammdb::DB;
 
 pub struct WalManager {
     // In memory buffer
@@ -42,12 +36,60 @@ impl WalManager {
         buf.extend_from_slice(&entry.serialize());
     }
 
-    // This would be called by the commit path
-    // For this step, we just return the buffer to be written
-    pub fn flush_buffer(&self) -> Vec<u8> {
+    pub fn sync(&self, device: &dyn BlockDevice) -> Result<(), ()> {
         let mut buf = self.buffer.lock();
-        let data = buf.clone();
+        if buf.is_empty() { return Ok(()); }
+
+        let mut log_offset = self.log_head.lock();
+        let start_block = self.superblock.log_start_block as usize;
+        let disk_offset = (start_block * 512) + *log_offset as usize;
+
+        // Write buffer to device
+        device.write(&buf, disk_offset).map_err(|_| ())?;
+        
+        // Update log head
+        *log_offset += buf.len() as u64;
         buf.clear();
-        data
+        Ok(())
+    }
+
+    pub fn recover(&self, device: &dyn BlockDevice, db: &DB) {
+        // Read log from start
+        let start_block = self.superblock.log_start_block as usize;
+        let max_len = (self.superblock.log_len_blocks * 512) as usize;
+        
+        let mut buf = vec![0u8; max_len];
+        if device.read(&mut buf, start_block * 512).is_err() {
+            return;
+        }
+
+        let mut offset = 0;
+        let mut valid_head = 0;
+
+        // Iterate entries
+        while offset < buf.len() {
+             if let Some(entry) = WalEntry::deserialize(&buf[offset..]) {
+                 let entry_len = entry.serialize().len(); 
+                 
+                 match entry.op {
+                     WalOp::Put => {
+                         let mut tx = db.tx();
+                         tx.put(&entry.key, &entry.value).ok();
+                         tx.commit().ok();
+                     },
+                     WalOp::Delete => {
+                     },
+                     WalOp::Commit => {
+                     }
+                 }
+                 
+                 offset += entry_len;
+                 valid_head += entry_len as u64;
+             } else {
+                 break; // End of valid log
+             }
+        }
+        
+        *self.log_head.lock() = valid_head;
     }
 }

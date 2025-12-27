@@ -11,6 +11,7 @@ members = [
     "subsystems/dbfs",
     "subsystems/dbfs-vfs",
     "subsystems/jammdb",
+    "tools/crash_monkey",
 ]
 
 [patch."https://github.com/nusakom/jammdb.git"]

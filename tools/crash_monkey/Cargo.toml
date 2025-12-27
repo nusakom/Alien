@@ -1,0 +1,13 @@
+[package]
+name = "crash_monkey"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dbfs2 = { path = "../../subsystems/dbfs" }
+device_interface = { path = "../../subsystems/device_interface" }
+constants = { path = "../../subsystems/constants" }
+log = "0.4"
+env_logger = "0.10"
+rand = "0.8"
+jammdb = { git = "https://github.com/nusakom/jammdb.git" }
