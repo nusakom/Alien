@@ -1,6 +1,5 @@
 use alloc::sync::Arc;
 
-#[cfg(target_arch = "riscv64")]
 use arch::read_timer;
 use vfscore::{
     error::VfsError,
@@ -26,11 +25,7 @@ impl RandomDevice {
 
 impl VfsFile for RandomDevice {
     fn read_at(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
-        #[cfg(target_arch = "riscv64")]
         let mut current_time = read_timer();
-        #[cfg(not(target_arch = "riscv64"))]
-        let mut current_time = 0;
-        
         buf.iter_mut().for_each(|x| {
             *x = current_time as u8;
             current_time = current_time.wrapping_sub(1);
