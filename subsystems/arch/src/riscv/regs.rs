@@ -8,8 +8,13 @@ pub struct ExtSstatus(pub usize);
 impl ExtSstatus {
     pub fn read() -> Self {
         let val: usize;
+        #[cfg(target_arch = "riscv64")]
         unsafe {
             asm!("csrr {},sstatus", out(reg)val);
+        }
+        #[cfg(not(target_arch = "riscv64"))]
+        {
+            val = 0;
         }
         ExtSstatus(val)
     }
