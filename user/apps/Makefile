@@ -26,6 +26,7 @@ BUILD_CRATES := \
 	sleep \
 	socket_test \
 	final_test \
+	romulus_test \
 #	shell \
 	print \
 
