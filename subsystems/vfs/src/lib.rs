@@ -1,5 +1,5 @@
 #![feature(c_variadic)]
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
 #[macro_use]
@@ -32,6 +32,8 @@ pub mod proc;
 pub mod ram;
 pub mod sys;
 pub mod timerfd;
+
+pub mod romulus_lite;
 
 pub static FS: Lazy<Mutex<BTreeMap<String, Arc<dyn VfsFsType>>>> =
     Lazy::new(|| Mutex::new(BTreeMap::new()));
