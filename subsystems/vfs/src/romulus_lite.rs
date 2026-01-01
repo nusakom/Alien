@@ -47,9 +47,12 @@ impl<T: Clone> Romulus<T> {
 mod tests {
     use super::*;
     use std::panic;
+    use std::thread;
+    use std::sync::Arc;
 
     #[test]
     fn test_basic_read_update() {
+        println!("test_basic_read_update: start");
         let mut r = Romulus::new(0);
         assert_eq!(*r.read(), 0);
 
@@ -58,98 +61,37 @@ mod tests {
         });
 
         assert_eq!(*r.read(), 42);
+        println!("test_basic_read_update: !TEST FINISH!");
     }
 
     #[test]
     fn test_panic_rollback() {
+        println!("test_panic_rollback: start");
         let mut r = Romulus::new(vec![]);
         
-        // 正常插入
+        // 1. Normal insert
         r.update(|v| v.push(1));
         assert_eq!(*r.read(), vec![1]);
 
-        // 模拟崩溃
+        // 2. Simulate crash
+        // Use a wrapper to allow catching unwind with mutable reference
+        let mut wrapper = std::cell::UnsafeCell::new(r);
+        
         let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-            // 这里我们需要用 UnsafeCell 或者 RefCell 来绕过 &mut 借用检查吗？
-            // 不，因为 update 拿的是 &mut self，在闭包里 panic 会导致 update 函数未完成，state 未翻转。
-            // 但是我们要在一个已经在 update 里的结构体上再次调用 read 需要 careful ownership。
-            // 实际上测试里我们持有 owner。
-            // 可是 catch_unwind 里的闭包如果是 FnOnce, 需要 move r 进去？
-            // 我们可以用 Arc<Mutex<Romulus>> 或者 直接 RefCell? 
-            // 这里的 Romulus::update 需要 &mut self.
-            // 我们可以仅测试 panic 发生后，外部 catch 到 panic，然后再次查看 r。
-            // 但 panic unwind 可能会毒化 r 吗？ Rust 的 panic unwinding 默认是安全的。
-            // 只是我们需要 owner 还在外面。
-            
-            // 下面这个闭包借用了 r (mutably)，如果 panic，borrow 结束了吗？
-            // 这是一个 borrow checker 的问题。
-            // 我们可以把 update 包装在一个 helper 函数里，helper 接受 &mut Romulus。
-            
-            // 这是一个 Rust 测试技巧问题。
-            // 让我们尝试最直接的方法。
-            
-            let mut wrapper = &mut r;
-            match panic::catch_unwind(panic::AssertUnwindSafe(move || {
-                 wrapper.update(|v| {
-                    v.push(2);
-                    panic!("oops");
-                });
-            })) {
-                 Ok(_) => {},
-                 Err(_) => {},
-            }
+            // Unsafe to get mutable reference, but valid for test logic simulation
+            let r_ref = unsafe { &mut *wrapper.get() };
+            r_ref.update(|v| {
+                v.push(2);
+                panic!("crash!");
+            });
         }));
-        
-        // 上面的写法有点绕，因为 panic::catch_unwind 要求闭包是 UnwindSafe 且 'static (如果 capture 引用)。
-        // 捕获 &mut T 是不满足 'static 的。
-        // 所以我们可能需要把 Romulus 放到一个可以 clone 的结构如 Arc<Mutex> 里或者直接 move 进去（但那样就拿不出来了）。
-        // 不过，我们可以测试逻辑上的等价物：手动模拟 update 的一半过程。
-        // 但我们要测的是 Romulus::update 的抗 panic 能力。
-        
-        // 更好的方法：
-        // 只是测试 "如果 closure panic，state 没变"。
-        // 我们可以只测试 update 函数逻辑:
-        // 在 update 内部, *self.views[back_idx] 被改了, state 还没改.
-        // 如果 panic, catch_unwind 捕获.
-        // 问题是 Rust 在 panic 时会 drop 栈变量。Romulus 本身在外面，没事。
-        // 但借用检查器会认为 panic 发生时借用还持有？
-        // 其实 panic unwind 后借用就释放了。
-        
-        // 让我们试试这个简单的测试逻辑：
-        // 由于测试环境可以用 std，我们用 std::panic::catch_unwind
-    }
-    
-    #[test]
-    fn test_panic_simulation() {
-         // 我们不能直接对借用的 &mut r 做 catch_unwind，因为生命周期原因。
-         // 我们换个思路：如果 update 内部 panic，外部能拿到 r 吗？
-         // 只要 catch_unwind 包裹住 update 调用即可。
-         // 但 update(&mut self) 也就意味着 catch_unwind 闭包必须 capture &mut self。
-         // 这要求 &mut self 是 'static 的（如果用 catch_unwind thread-local 限制较少，但这里是普通）。
-         // 或者是 AssertUnwindSafe.
-         
-         let mut r = Romulus::new(vec![1, 2, 3]);
-         
-         // 我们需要用一个小技巧来绕过 'static 限制，或者直接用 AssertUnwindSafe。
-         // 但 &mut T 还是有生命周期问题。
-         
-         // 解决方案：使用 AssertUnwindSafe 和 scoped thread 或者直接只要编译器允许。
-         // 简单粗暴点：
-         let mut r = Box::new(Romulus::new(vec![1]));
-         let r_ptr = &mut *r as *mut Romulus<Vec<i32>>;
-         
-         let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-             unsafe {
-                 (*r_ptr).update(|v| {
-                     v.push(2);
-                     panic!("crash!");
-                 });
-             }
-         }));
 
-         assert!(result.is_err());
-         
-         // 验证：数据应该是 [1]，而不是 [1, 2]
-         assert_eq!(*r.read(), vec![1]);
+        assert!(result.is_err());
+        
+        // 3. Verify rollback
+        let r_final = unsafe { &*wrapper.get() };
+        // Should still be [1], not [1, 2]
+        assert_eq!(*r_final.read(), vec![1]);
+        println!("test_panic_rollback: !TEST FINISH!");
     }
 }
