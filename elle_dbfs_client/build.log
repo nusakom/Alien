@@ -1,0 +1,46 @@
+   Compiling elle_dbfs_client v0.1.0 (/home/ubuntu2204/Desktop/elle_dbfs_client)
+error: mismatched closing delimiter: `)`
+   --> src/main.rs:202:39
+    |
+202 |                 history.record(ElleOp {
+    |                               -       ^ unclosed delimiter
+    |                               |
+    |                               closing delimiter possibly meant for this
+...
+208 |                 );
+    |                 ^ mismatched closing delimiter
+
+error: mismatched closing delimiter: `)`
+   --> src/main.rs:224:39
+    |
+224 |                 history.record(ElleOp {
+    |                               -       ^ unclosed delimiter
+    |                               |
+    |                               closing delimiter possibly meant for this
+...
+230 |                 );
+    |                 ^ mismatched closing delimiter
+
+error: mismatched closing delimiter: `)`
+   --> src/main.rs:244:39
+    |
+244 |                 history.record(ElleOp {
+    |                               -       ^ unclosed delimiter
+    |                               |
+    |                               closing delimiter possibly meant for this
+...
+250 |                 );
+    |                 ^ mismatched closing delimiter
+
+error: mismatched closing delimiter: `)`
+   --> src/main.rs:266:39
+    |
+266 |                 history.record(ElleOp {
+    |                               -       ^ unclosed delimiter
+    |                               |
+    |                               closing delimiter possibly meant for this
+...
+272 |                 );
+    |                 ^ mismatched closing delimiter
+
+error: could not compile `elle_dbfs_client` (bin "elle_dbfs_client") due to 4 previous errors
