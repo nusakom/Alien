@@ -420,6 +420,8 @@ cd subsystems/dbfs/elle_tests
 - Crash recovery testing (simulated power loss)
 - TCP protocol correctness
 
+**[→ Elle Testing Guide](ELLE_TESTING_GUIDE.md)** - Complete guide to formal verification testing with Elle framework.
+
 **Tier 3: POSIX & Performance** ([tests/testbin-second-stage/](tests/testbin-second-stage/))
 ```bash
 /tests # ./unixbench_testcode.sh
