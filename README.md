@@ -127,6 +127,13 @@ qemu-system-riscv64 \
 # 或者只运行 DBFS 测试
 ./dbfs_test
 ```
+---
+
+#### 结果展示:
+
+![alt text](image.png)
+
+---
 
 ## 目录结构
 
