@@ -1,5 +1,5 @@
 # Alien OS
-
+![alt text](image-1.png)
 一个用 Rust 写的 RISC-V 操作系统，带事务型文件系统。
 
 ## 这个系统是干什么的？
@@ -80,6 +80,7 @@ sudo apt install qemu-system-riscv64
 # 安装其他工具
 sudo apt install make python3
 ```
+[参考链接]:(https://github.com/nusakom/Alienos-Environment.git)
 
 ### 2. 编译系统
 
