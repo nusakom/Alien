@@ -30,9 +30,25 @@ mod task;
 /// 初始进程（0号进程）
 pub static INIT_PROCESS: Lazy<Arc<Task>> = Lazy::new(|| {
     let mut data = Vec::new();
-    read_all("/tests/init", &mut data);
-    assert!(data.len() > 0);
-    let task = Task::from_elf("/tests/init", data.as_slice()).unwrap();
+    println!("Attempting to read init from initramfs...");
+    
+    // Try to read from initramfs first (preferred for testing)
+    let success = read_all("/init", &mut data);
+    println!("Read from /init success: {}, data length: {}", success, data.len());
+    
+    // Fallback to /tests/init if initramfs init not found
+    if !success || data.len() == 0 {
+        println!("Fallback: attempting to read /tests/init...");
+        data.clear();
+        let success = read_all("/tests/init", &mut data);
+        println!("Read from /tests/init success: {}, data length: {}", success, data.len());
+        
+        if !success || data.len() == 0 {
+            panic!("Failed to read init program from both /init and /tests/init");
+        }
+    }
+    
+    let task = Task::from_elf("init", data.as_slice()).unwrap();
     Arc::new(task)
 });
 

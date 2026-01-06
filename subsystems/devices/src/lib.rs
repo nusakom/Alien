@@ -3,7 +3,7 @@
 mod block;
 mod gpu;
 mod input;
-mod net;
+pub mod net;
 mod prob;
 mod rtc;
 mod uart;

@@ -28,6 +28,7 @@ pub trait PerfEventOps: Send + Sync + Debug + Any {
     fn writeable(&self) -> bool {
         false
     }
+    #[allow(dead_code)]
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }

@@ -6,6 +6,6 @@ members = [
     "subsystems/*",
     "user/apps/*",
     "user/musl/hello",
-    "user/musl/async_test",
+    # "user/musl/async_test",  # Temporarily disabled: tokio depends on mio/socket2 which fail in no_std
     "user/musl/ftest",
 ]

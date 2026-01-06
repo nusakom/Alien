@@ -1,17 +1,15 @@
 mod regs;
 
-use core::arch::asm;
-
-pub use regs::*;
 use riscv::{asm::sfence_vma_all, register::satp};
 
+pub use regs::*;
+
 /// 获取当前的 hart id
+/// 使用 x1 (tp) 寄存器读取
 pub fn hart_id() -> usize {
-    let mut id: usize;
+    let id: usize;
     unsafe {
-        asm!(
-        "mv {},tp", out(reg)id,
-        );
+        core::arch::asm!("mv {}, tp", out(reg) id);
     }
     id
 }

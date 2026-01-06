@@ -1,5 +1,3 @@
-use core::arch::asm;
-
 use riscv::register::sstatus::SPP;
 
 #[derive(Debug, Default, Copy, Clone)]
@@ -9,7 +7,7 @@ impl ExtSstatus {
     pub fn read() -> Self {
         let val: usize;
         unsafe {
-            asm!("csrr {},sstatus", out(reg)val);
+            core::arch::asm!("csrrs {}, sstatus, x0", out(reg) val, options(nomem, nostack));
         }
         ExtSstatus(val)
     }

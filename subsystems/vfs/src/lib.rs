@@ -106,7 +106,13 @@ fn register_all_fs() {
         CommonFsProviderImpl,
     ));
 
+    #[cfg(any(feature = "fat", feature = "ext"))]
     FS.lock().insert("diskfs".to_string(), diskfs);
+
+    // Register DBFS (Database File System) Wrapper
+    // Note: In AlienOS, we can point the metadata DB to a stable path on diskfs or initrd
+    let dbfs = Arc::new(dbfs::DbfsFsType::new("/tests/metadata.db".to_string()));
+    FS.lock().insert("dbfs".to_string(), dbfs);
 
     println!("register fs success");
 }
@@ -140,24 +146,52 @@ pub fn init_filesystem() -> AlienResult<()> {
         .i_mount(0, "/dev/shm", None, &[])?;
     path.join("dev/shm")?.mount(shm_ramfs, 0)?;
 
-    let diskfs = FS.lock().index("diskfs").clone();
-    let blk_inode = path
-        .join("/dev/sda")?
-        .open(None)
-        .expect("open /dev/sda failed")
-        .inode()?;
+    #[cfg(any(feature = "fat", feature = "ext"))]
+    {
+        let diskfs = FS.lock().index("diskfs").clone();
+        let blk_inode = path
+            .join("/dev/sda")?
+            .open(None)
+            .expect("open /dev/sda failed")
+            .inode()?;
 
-    let diskfs_root = diskfs.i_mount(0, "/tests", Some(blk_inode), &[])?;
-    path.join("tests")?.mount(diskfs_root, 0)?;
-    println!("mount fs success");
+        let diskfs_root = diskfs.i_mount(0, "/tests", Some(blk_inode.clone()), &[])?;
+        path.join("tests")?.mount(diskfs_root.clone(), 0)?;
+        println!("mount diskfs (Bottom FS) success");
+
+        // --- DBFS Integration: Mount DBFS Layer over DiskFS ---
+        let dbfs = FS.lock().index("dbfs").clone();
+        // Use diskfs_root as the 'device' (Bottom FS) for DBFS
+        let dbfs_root = dbfs.i_mount(0, "/data", Some(diskfs_root.inode()?), &[])?;
+        path.join("data")?.mount(dbfs_root, 0)?;
+        println!("mount dbfs (Transactional Layer) over diskfs success");
+    }
 
     vfscore::path::print_fs_tree(&mut VfsOutPut, ramfs_root.clone(), "".to_string(), false)
         .unwrap();
 
     initrd::populate_initrd(ramfs_root.clone())?;
+    println!("Init filesystem success");
+
+    // Run DBFS Transaction Tests
+    dbfs::run_dbfs_tests();
+
+    // Initialize Elle Handler for external testing
+    #[cfg(feature = "alien_integration")]
+    {
+        println!("Initializing Elle Handler for DBFS testing...");
+        dbfs::elle_handler::init_elle_handler();
+        println!("Elle Handler ready - waiting for virtio-serial connections");
+
+        // Initialize Elle TCP Server info
+        const ELLE_TCP_PORT: u16 = 12345;
+        println!("Initializing Elle TCP Server for Host communication...");
+        dbfs::tcp_server::init_elle_tcp_server_info(ELLE_TCP_PORT);
+        println!("Elle TCP Server configured on port {}", ELLE_TCP_PORT);
+        println!("Note: Server will start when kernel is ready");
+    }
 
     SYSTEM_ROOT_FS.call_once(|| ramfs_root);
-    println!("Init filesystem success");
     Ok(())
 }
 

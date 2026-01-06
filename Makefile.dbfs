@@ -1,0 +1,20 @@
+.PHONY: dbfs
+
+dbfs:
+	@echo "========================================="
+	@echo "  DBFS 测试 - 一键构建和运行"
+	@echo "========================================="
+	@echo ""
+	@echo "📦 构建中..."
+	cargo build --release --target riscv64gc-unknown-none-elf -p test_init
+	cargo build --release --target riscv64gc-unknown-none-elf -p dbfs_test
+	@echo ""
+	@echo "📦 生成 initramfs..."
+	make initramfs
+	@echo ""
+	@echo "📦 构建内核..."
+	make build
+	@echo ""
+	@echo "🚀 运行 DBFS 测试..."
+	@echo "========================================="
+	make run

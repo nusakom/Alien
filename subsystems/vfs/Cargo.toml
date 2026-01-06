@@ -29,6 +29,7 @@ ramfs = { git = "https://github.com/os-module/rvfs.git" }
 fat-vfs = { git = "https://github.com/os-module/rvfs.git", optional = true }
 lwext4-vfs = { git = "https://github.com/os-module/rvfs", optional = true }
 devices = { path = "../devices" }
+dbfs = { path = "../dbfs" }
 
 printf-compat = { version = "0.1", default-features = false, optional = true }
 cty = { version = "0", optional = true }

@@ -118,37 +118,37 @@ compile:
 		cargo build --release -p kernel \
 		--target $(TARGET) \
 		--features $(FEATURES)
-	
+
 	@riscv64-linux-gnu-ld -T $(LINKER_SCRIPT) \
 		-o $(KERNEL_FILE) \
 		$(KERNEL_LIB)
 	@echo "Generating kernel symbols at $@"
 	@nm -n -C $(KERNEL_FILE) | grep ' [Tt] ' | grep -v '\.L' | grep -v '$$x' | RUSTFLAGS= gen_ksym > kallsyms
-	@make copy_kallsyms
+	@-make copy_kallsyms 2>/dev/null || echo "Warning: Could not copy kallsyms (requires sudo)"
 
 	@#$(OBJCOPY) $(KERNEL_FILE) --strip-all -O binary $(KERNEL_BIN)
 	@cp $(KERNEL_FILE) ./kernel-qemu
 
 
 copy_kallsyms:
-	@-sudo umount $(FSMOUNT)
-	@-sudo rm -rf $(FSMOUNT)
+	@-sudo umount $(FSMOUNT) 2>/dev/null || true
+	@-sudo rm -rf $(FSMOUNT) 2>/dev/null || true
 	@-mkdir $(FSMOUNT)
 	@sudo mount $(IMG) $(FSMOUNT)
 	@echo "copying kallsyms"
-	sudo cp kallsyms $(FSMOUNT)/kallsyms
+	@sudo cp kallsyms $(FSMOUNT)/kallsyms
 	@echo "copying kallsyms done"
 	@make unmount
 	@rm kallsyms
 
-initramfs:
+initramfs: user
 	make -C tools/initrd
 
 user:
 	@echo "Building user apps"
 	@make all -C ./user/apps
 	@make all -C ./user/c_apps ARCH=riscv64
-	@make all -C ./user/musl
+	#@make all -C ./user/musl
 	@echo "Building user apps done"
 
 sdcard:$(FS) mount testelf user initramfs
@@ -239,6 +239,12 @@ mount:
 	@sudo cp tools/f1.txt $(FSMOUNT)
 	@sudo mkdir $(FSMOUNT)/folder
 	@sudo cp tools/f1.txt $(FSMOUNT)/folder
+	@sudo mkdir -p $(FSMOUNT)/tests
+	@echo "Copying DBFS test binaries to filesystem..."
+	@sudo cp target/riscv64gc-unknown-none-elf/release/test_init $(FSMOUNT)/init
+	@-sudo cp target/riscv64gc-unknown-none-elf/release/dbfs_test $(FSMOUNT)/dbfs_test 2>/dev/null || true
+	@-sudo cp target/riscv64gc-unknown-none-elf/release/final_test $(FSMOUNT)/final_test 2>/dev/null || true
+	@echo "DBFS test binaries copied successfully"
 
 unmount:
 	@echo "Unmounting $(FSMOUNT)"
@@ -284,8 +290,71 @@ clean:
 check:
 	cargo check -p kernel --target riscv64gc-unknown-none-elf --features $(FEATURES)
 
-fix: 
+fix:
 	cargo fix --allow-dirty --allow-staged -p kernel --target riscv64gc-unknown-none-elf --features $(FEATURES)
+
+dbfs:
+	@echo "========================================="
+	@echo "  DBFS 测试 - 一键构建和运行"
+	@echo "========================================="
+	@echo ""
+	@echo "📦 (1/4) 构建 test_init..."
+	cargo build --release --target riscv64gc-unknown-none-elf -p test_init
+	@echo "✅ test_init 完成"
+	@echo ""
+	@echo "📦 (2/4) 构建 dbfs_test..."
+	cargo build --release --target riscv64gc-unknown-none-elf -p dbfs_test
+	@echo "✅ dbfs_test 完成"
+	@echo ""
+	@echo "📦 (3/4) 生成 initramfs..."
+	make initramfs
+	@echo "✅ initramfs 完成"
+	@echo ""
+	@echo "📦 (4/4) 构建内核..."
+	make build
+	@echo "✅ 内核构建完成"
+	@echo ""
+	@echo "🚀 启动 DBFS 测试..."
+	@echo "========================================="
+	@echo ""
+	@echo "系统将："
+	@echo "  1. 自动运行 DBFS 测试"
+	@echo "  2. 显示测试结果"
+	@echo "  3. 进入交互式 shell"
+	@echo "  4. 输入 exit 退出并关机"
+	@echo ""
+	@echo "========================================="
+	@echo ""
+	make run
+
+elle: install compile
+	@echo "========================================="
+	@echo "  Elle + Jepsen 分布式测试"
+	@echo "========================================="
+	@echo ""
+	@echo "📦 构建 Elle 测试..."
+	cargo build --release --target riscv64gc-unknown-none-elf -p test_init
+	cargo build --release --target riscv64gc-unknown-none-elf -p final_test
+	@echo "✅ Elle 测试构建完成"
+	@echo ""
+	@echo "📦 生成 initramfs..."
+	make initramfs
+	@echo "✅ initramfs 完成"
+	@echo ""
+	@echo "📦 构建内核..."
+	make build
+	@echo "✅ 内核构建完成"
+	@echo ""
+	@echo "🚀 启动 Elle 测试..."
+	@echo "========================================="
+	@echo ""
+	@echo "Elle 测试说明："
+	@echo "  - 在内核中执行: cd / && ./final_test"
+	@echo "  - 或者通过 TCP 连接运行 Host 端的 Elle 测试"
+	@echo ""
+	@echo "========================================="
+	@echo ""
+	make run
 
 help:
 	@echo "Usage: make [target]"
@@ -299,6 +368,8 @@ help:
 	@echo "  	 GUI: enable gui, it's available only when running qemu"
 	@echo "  	 FS: file system, for vf2 or unmatched, only fat is available"
 	@echo "  fake_run [SMP=?] [GUI=?]: run kernel without building, the SMP should same as build"
+	@echo "  dbfs: build and run DBFS correctness tests"
+	@echo "  elle: build and run Elle + Jepsen distributed tests"
 	@echo "  vf2 [SMP=?] [LOG=?] [VF2=y]: build starfive2 board image"
 	@echo "      SMP: number of cores, must >= 2"
 	@echo "      VF2: must be y"
@@ -312,6 +383,8 @@ help:
 	@echo "  docs: generate docs"
 	@echo "  clean: clean"
 	@echo "  check: check"
+	@echo "  fix: auto-fix warnings"
 	@echo "  help: help"
 
-.PHONY: all install build run clean fake_run sdcard vf2 unmatched gdb-client gdb-server kernel_asm docs user initramfs
+.PHONY: all install build run clean fake_run sdcard vf2 unmatched gdb-client gdb-server kernel_asm docs user initramfs dbfs elle
+

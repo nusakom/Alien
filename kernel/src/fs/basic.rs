@@ -307,6 +307,17 @@ pub fn sys_fchdir(fd: usize) -> AlienResult<isize> {
     Ok(0)
 }
 
+/// 一个系统调用，用于在指定路径下创建一个空的目录。
+/// 
+/// 成功创建目录则返回 0；否则返回错误码。
+/// 
+/// Reference: [mkdir](https://man7.org/linux/man-pages/man2/mkdir.2.html)
+#[syscall_func(83)]
+pub fn sys_mkdir(path: *const u8, mode: u32) -> AlienResult<isize> {
+    // mkdir is equivalent to mkdirat with AT_FDCWD
+    sys_mkdirat(AT_FDCWD, path, mode)
+}
+
 /// 一个系统调用，用于在 相对于一个目录某位置处 路径下创建一个空的目录。功能与 [`sys_mkdir`] 相似。
 ///
 /// 有关对 `dirfd` 和 `mode` 的解析规则以及 flag 的相关设置可见 [`sys_openat`]。成功创建目录则返回 0；否则返回错误码。

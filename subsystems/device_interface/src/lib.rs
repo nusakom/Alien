@@ -26,6 +26,7 @@ pub trait LowBlockDevice {
 
 pub trait GpuDevice: Any + DeviceBase {
     fn update_cursor(&self);
+    #[allow(clippy::mut_from_ref)]
     fn get_framebuffer(&self) -> &mut [u8];
     fn flush(&self);
     fn resolution(&self) -> (u32, u32);

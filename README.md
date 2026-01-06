@@ -1,97 +1,95 @@
-# Alien
+<div align="center">
 
-A simple operating system implemented in rust. The purpose is to explore how to use modules to build a complete os, so the system is composed of a series of independent modules. At present, the system already supports user-mode programs and some simple functions.
+  ![Alien OS](https://img.shields.io/badge/Alien-OS-blue?style=for-the-badge)
+  ![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange?style=for-the-badge&logo=rust)
+  ![RISC-V](https://img.shields.io/badge/RISC--V-64--bit-green?style=for-the-badge)
+  ![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
 
-<img src="assert/image-20230815132104606.png" alt="image-20230815132104606" style="zoom:50%;" />
+  # 🚀 Alien OS
 
-## Project Structure
+  **A Modular RISC-V Operating System with Transactional Filesystem**
 
-```
-├── LICENSE
-├── Makefile                (编译命令)
-├── README.md               (readme)
-├── apps                    (rust程序)
-├── assert
-├── kernel                  (核心子系统)
-├── doc                     (开发文档与内核相关模块文档)
-├── subsystems							
-    ├── arch            (riscv相关代码)
-    ├── platform        (平台相关代码)
-    ├── config		    (内核配置)
-    ├── devices         (设备注册管理)
-    ├── drivers         (设备驱动合集)
-    ├── unwinder        (内核panic处理)
-    ├── vfs             (虚拟文件系统)
-    ├── interrupt       (外中断注册管理)
-    ├── ipc             (进程间通信模块)
-    ├── mem          	(内存管理)
-    ├── knet            (网络模块)
-    ├── ksync           (内核锁实现)
-    ├── timer           (时间相关实现)
-    ├── constants		(常量、错误定义)
-    ├── device_interface(设备接口定义)
-├── tests                   (测试程序)
-├── tools                   (一些dts文件)
-└── userlibc                (rust lib库)
-```
+</div>
 
+---
 
+## 📖 Quick Navigation
 
-## Run
+### 🌐 Language / 语言
 
-1. install qemu 7.0.0(qume版本最低要求7.0.0)
-2. install rust nightly
-3. install riscv64-linux-musl [toolchain](https://musl.cc/)<br>
-以上内容可以参考[简明 ArceOS Tutorial Book](https://rcore-os.cn/arceos-tutorial-book/ch01-02.html)
+- **[English Guide](README_EN.md)** - Full English documentation
+- **[中文指南](README_CN.md)** - 完整中文文档
 
-```
-make help
-```
+### 📚 Key Documentation
 
-```
-# 一键运行qemu，注意在编译busybox时选择静态链接Settings->Build static binary (no shared libs)
-# 忘记设置静态链接可以使用make clean重新配置
-make run
-# run test
-> cd tests
-> ./final_test
+| Document | Description |
+|----------|-------------|
+| **[Testing Guide](TESTING.md)** | Complete testing instructions / 完整测试指南 |
+| **[Filesystem Architecture](FILESYSTEM_ARCHITECTURE.md)** | DBFS architecture details / 文件系统架构详解 |
+| **[Project Highlights](PROJECT_HIGHLIGHTS.md)** | What we built / 项目亮点 |
+
+---
+
+## 🎯 Quick Start
+
+```bash
+# Clone repository / 克隆仓库
+git clone <repository-url>
+cd Alien
+
+# Build kernel / 编译内核
+make kernel
+
+# Run system / 运行系统
+make f_test
+
+# Run tests / 运行测试
+/ # ./final_test
 ```
 
-### Run with GUI (QEMU)
+---
+
+## 🌟 Key Features
+
+- 🎯 **Modular Design** - 13 independent subsystems
+- 📁 **DBFS Filesystem** - WAL + ACID transactions
+- 🧪 **Elle + Jepsen** - Distributed system testing
+- 💻 **User Space** - 20+ applications
+- 📊 **Comprehensive Tests** - Performance + correctness
+
+---
+
+## 📁 Project Structure
 
 ```
-make run GUI=y
-# 在编译和运行的时候指定参数y
-cd tests
-slint or sysinfo or todo or printdemo or memorygame 
-```
-按下ESC退出GUI程序。
-
-
-### [Run VisionFive2](./docs/doc/boot.md)
-
-Update the `TFTPBOOT`  variable in Makefile.
-
-```
-make sdcard
-make vf2 VF2=y SMP=2
-// 生成testos.bin
-// 这里smp=2 表示的是单核启动，对于u74-mc处理器，0号核不会被启动，从1号开始。
+Alien/
+├── subsystems/dbfs/          # Transactional filesystem
+├── subsystems/vfs/           # Virtual filesystem
+├── subsystems/mem/           # Memory management
+├── user/apps/                # User applications
+└── tests/                    # Test suites
 ```
 
-## GDB
+---
 
-1. `make gdb-server`
-2. `make gdb-client`
+## 🧪 Testing
 
-## [Doc](https://godones.github.io/Alien/)
+- **Core Tests**: [TESTING.md](TESTING.md)
+- **Elle Tests**: See [README_EN.md](README_EN.md) or [README_CN.md](README_CN.md)
 
+---
 
+## 📖 Full Documentation
 
-## Reference
+- **[README_EN.md](README_EN.md)** - Complete English documentation
+- **[README_CN.md](README_CN.md)** - 完整中文文档
 
-- rCoreTutorial-v3 http://rcore-os.cn/rCore-Tutorial-Book-v3/chapter0/index.html
-- Maturin https://gitlab.eduxiji.net/scPointer/maturin
-- Redox https://gitlab.redox-os.org/redox-os/
-- [Files · master · FTL OS / OSKernel2022-FTLOS · GitLab (eduxiji.net)](https://gitlab.eduxiji.net/DarkAngelEX/oskernel2022-ftlos/-/tree/master)
+---
 
+<div align="center">
+
+  **Built with ❤️ using Rust**
+
+  **[⭐ Star us on GitHub!](https://github.com/your-repo/Alien)**
+
+</div>

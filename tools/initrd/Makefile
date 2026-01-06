@@ -43,16 +43,60 @@ initramfs:
 		mkdir $(initrd); \
 	fi
 	cp -r $(BB)/_install/* $(initrd)
-	-#mkdir -p $(initrd)/dev
-	-#mkdir -p $(initrd)/proc
-	-#mkdir -p $(initrd)/sys
-	-#mkdir -p $(initrd)/tmp
-	@if [ -f init ]; then \
-		echo "init exists"; \
-	else \
-		echo "init does not exist"; \
-		echo "#!/bin/sh\nmount -t proc none /proc\nmount -t sysfs none /sys\nmount -t devtmpfs none /dev\nexec /bin/sh" > $(initrd)/init; \
+	mkdir -p $(initrd)/dev
+	mkdir -p $(initrd)/proc
+	mkdir -p $(initrd)/sys
+	mkdir -p $(initrd)/tmp
+	@echo "Adding DBFS test_init as init program..."
+	@if [ -f ../../target/riscv64gc-unknown-none-elf/release/test_init ]; then \
+		echo "Copying test_init as /init"; \
+		cp ../../target/riscv64gc-unknown-none-elf/release/test_init $(initrd)/init; \
 		chmod +x $(initrd)/init; \
+		echo "test_init successfully installed as init"; \
+	else \
+		echo "test_init not found, trying dbfs_test..."; \
+		if [ -f ../../target/riscv64gc-unknown-none-elf/release/dbfs_test ]; then \
+			echo "Copying dbfs_test as init (fallback)"; \
+			cp ../../target/riscv64gc-unknown-none-elf/release/dbfs_test $(initrd)/init; \
+			chmod +x $(initrd)/init; \
+		else \
+			echo "No test binary found, creating default init"; \
+			echo "#!/bin/sh\nmount -t proc none /proc\nmount -t sysfs none /sys\nmount -t devtmpfs none /dev\nexec /bin/sh" > $(initrd)/init; \
+			chmod +x $(initrd)/init; \
+		fi \
+	fi
+	@echo "Copying dbfs_test to initramfs..."
+	@if [ -f ../../target/riscv64gc-unknown-none-elf/release/dbfs_test ]; then \
+		echo "Copying dbfs_test to root"; \
+		cp ../../target/riscv64gc-unknown-none-elf/release/dbfs_test $(initrd)/dbfs_test; \
+		chmod +x $(initrd)/dbfs_test; \
+		echo "dbfs_test successfully added to initramfs"; \
+	else \
+		echo "Warning: dbfs_test not found"; \
+	fi
+	@echo "Copying final_test (Elle) to initramfs..."
+	@if [ -f ../../target/riscv64gc-unknown-none-elf/release/final_test ]; then \
+		echo "Copying final_test to root"; \
+		cp ../../target/riscv64gc-unknown-none-elf/release/final_test $(initrd)/final_test; \
+		chmod +x $(initrd)/final_test; \
+		echo "final_test successfully added to initramfs"; \
+	else \
+		echo "Warning: final_test not found"; \
+	fi
+	@echo "Copying test binaries to initramfs..."
+	@if [ -d ../../tests/testbin-second-stage ]; then \
+		echo "Copying test binaries to /tests"; \
+		mkdir -p $(initrd)/tests; \
+		cp ../../tests/testbin-second-stage/*.sh $(initrd)/tests/ 2>/dev/null || true; \
+		cp ../../tests/testbin-second-stage/hackbench $(initrd)/tests/ 2>/dev/null || true; \
+		cp ../../tests/testbin-second-stage/arithoh $(initrd)/tests/ 2>/dev/null || true; \
+		cp ../../tests/testbin-second-stage/dhry2 $(initrd)/tests/ 2>/dev/null || true; \
+		cp ../../tests/testbin-second-stage/looper $(initrd)/tests/ 2>/dev/null || true; \
+		cp ../../tests/testbin-second-stage/syscall $(initrd)/tests/ 2>/dev/null || true; \
+		chmod +x $(initrd)/tests/* 2>/dev/null || true; \
+		echo "Test binaries successfully added to /tests"; \
+	else \
+		echo "Warning: test binaries not found"; \
 	fi
 	cd $(initrd) && find . -print0 | cpio --null -ov --format=newc | gzip -9 > ../initramfs.cpio.gz
 

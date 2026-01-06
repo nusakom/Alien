@@ -23,6 +23,7 @@ pub struct PerCpuVariantsImpl<T> {
 }
 
 impl<T: Send + Sync + Clone> PerCpuVariantsImpl<T> {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             data: Vec::with_capacity(CPU_NUM),

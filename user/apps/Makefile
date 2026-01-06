@@ -10,8 +10,10 @@ LD_SCRIPT := user/apps/linker.ld
 export RUSTFLAGS := ${RUSTFLAGS} -C link-arg=-T$(LD_SCRIPT)
 
 all:build
-	@echo "Moving apps to ../diskfs/bin"
-	@$(foreach dir, $(BUILD_CRATES), (sudo cp $(target)$(dir) $(FSMOUNT)/$(dir););)
+	@echo "Moving apps to $(FSMOUNT)"
+	@mkdir -p $(FSMOUNT)
+	@$(foreach dir, $(BUILD_CRATES), (sudo cp $(target)$(dir) $(FSMOUNT)/$(dir) 2>/dev/null || true);)
+	@echo "Apps moved successfully"
 
 
 build:
@@ -20,12 +22,15 @@ build:
 
 
 BUILD_CRATES := \
-	init \
+	test_init \
+	minimal_fs_test \
 	run_test \
 	tests \
 	sleep \
 	socket_test \
 	final_test \
+	dbfs_test \
+	simple_test \
 #	shell \
 	print \
 

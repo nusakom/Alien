@@ -1,0 +1,57 @@
+[package]
+name = "dbfs"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+# Alien local subsystems
+mem = { path = "../mem" }
+constants = { path = "../constants" }
+ksync = { path = "../ksync" }
+platform = { path = "../platform" }
+devices = { path = "../devices", features = ["net_test"] }
+drivers = { path = "../drivers" }
+
+# Transactional FS core
+vfscore = { git = "https://github.com/os-module/rvfs.git", package = "vfscore", default-features = false, optional = true }
+
+spin = { version = "0", default-features = false }
+bitflags = { version = "1", default-features = false }
+onlyerror = { version = "0.1", default-features = false }
+buddy_system_allocator = { version = "0.9.0" }
+
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+log = { version = "0.4", default-features = false }
+
+# Optional features
+fuser = { git = "https://github.com/cberner/fuser", rev = "96b6f16", optional = true }
+libc = { version = "0.2.51", optional = true }
+core2 = { version = "0.4.0", default-features = false, optional = true }
+memmap2 = { version = "0.5.10", optional = true }
+downcast = { version = "0.11.0", optional = true }
+rand = { version = "0.8.5", optional = true }
+smallvec = { version = "1.6.1", optional = true }
+
+[features]
+default = ["sli32k", "alien_integration"]
+rvfs2 = ["vfscore"]
+rvfs2_demo = ["vfscore"]
+alien_integration = ["vfscore"]
+fuse = [
+    "rand",
+    "fuser",
+    "libc",
+    "core2",
+    "memmap2",
+    "downcast",
+    "fuser/abi-7-19",
+    "fuser/abi-7-16",
+    "fuser/abi-7-28",
+    "smallvec",
+]
+sli512 = []
+sli8k = []
+sli4k = []
+sli1k = []
+sli32k = []

@@ -7,4 +7,5 @@
         "--target",
         "riscv64gc-unknown-none-elf"
     ],
+    "kiroAgent.configureMCP": "Disabled",
 }

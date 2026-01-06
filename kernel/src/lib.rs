@@ -57,7 +57,7 @@ fn main(hart_id: usize) {
         shim::register_task_func(Box::new(DriverTaskImpl));
         devices::init_device();
         vfs::init_filesystem().expect("init filesystem failed");
-        ksym::init_kallsyms();
+        // ksym::init_kallsyms(); // Temporarily disabled for testing
         trap::init_trap_subsystem();
         arch::allow_access_user_memory();
         task::init_task();

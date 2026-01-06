@@ -4,9 +4,17 @@ pub mod nettest {
     use core::net::{IpAddr, SocketAddr};
 
     use constants::AlienResult;
+    use log::info;
     use netcore::tcp::TcpSocket;
+    use platform::println;
 
-    use crate::net::port::neterror2alien;
+    /// Network error type
+    pub struct NetError;
+
+    /// Convert netcore error to AlienResult
+    fn neterror2alien<T>(_: T) -> constants::AlienError {
+        constants::AlienError::EPERM
+    }
 
     /// A TCP stream between a local and a remote socket.
     pub struct TcpStream(TcpSocket);
