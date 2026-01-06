@@ -1,186 +1,187 @@
-# DBFS - Database File System with ACID Transactions
+# DBFS - 带事务的文件系统
 
-## Overview
+## DBFS 是什么？
 
-DBFS is a transactional filesystem layer that provides ACID guarantees for file operations in Alien OS.
+DBFS 是 Alien OS 的文件系统，支持**事务操作**。
 
-## Architecture
+简单来说，就像数据库的事务一样：
+- 你可以同时操作多个文件
+- 要么全部成功，要么全部失败
+- 不会出现"写了一半就崩了"的情况
+- 系统崩溃后，数据能恢复到正确状态
 
+## 为什么需要 DBFS？
+
+普通文件系统的问题：
 ```
-Application / Userspace System Calls
-    │
-    ↓
-VFS Layer (VfsPath / VfsFile / VfsDentry / VfsInode)
-    │
-VfsSuperBlock
-    │
-┌───────────────────────────────────────┐
-│            DBFS                       │
-│  Transaction Manager                  │
-│  ┌─────────────────────────────────┐  │
-│  │  Begin / Commit / Rollback     │  │
-│  │  Write-Ahead Log (WAL)         │  │
-│  │  Crash Recovery                │  │
-│  │  Atomic Operations             │  │
-│  └─────────────────────────────────┘  │
-└───────────────────────────────────────┘
-    │
-    ↓
-Underlying FS (FatFs / ExtFs / Raw Block Device)
+进程 A: 写文件 1 → 成功 ✅
+进程 A: 写文件 2 → 崩溃 ❌
+结果: 文件 1 改了，文件 2 没改，数据不一致
 ```
 
-## Features
+DBFS 的事务：
+```
+进程 A: 开始事务
+进程 A: 写文件 1 → 暂存
+进程 A: 写文件 2 → 暂存
+进程 A: 提交 → 全部写入成功 ✅
+       或回滚 → 全部撤销，恢复原状
+```
 
-### ACID Properties
+## 怎么用？
 
-1. **Atomicity**
-   - File operations are atomic
-   - Multi-file transactions either all succeed or all fail
-   - No partial states
-
-2. **Consistency**
-   - Filesystem state is always valid
-   - No corruption after crashes
-   - Referential integrity maintained
-
-3. **Isolation**
-   - Concurrent transactions don't interfere
-   - Each transaction sees a consistent snapshot
-
-4. **Durability**
-   - Committed transactions survive crashes
-   - Write-Ahead Log (WAL) ensures persistence
-   - Recovery mechanism after system restart
-
-## Components
-
-### TransactionManager
-
-Manages all active transactions and coordinates commit/rollback.
+### 基本操作
 
 ```rust
-let manager = TransactionManager::new();
+// 开始一个事务
+dbfs.begin_transaction();
 
-// Begin transaction
-let tx_id = manager.begin_transaction()?;
+// 写文件（此时只是暂存，还没真正写入）
+dbfs.write_file("file1.txt", "data1");
+dbfs.write_file("file2.txt", "data2");
 
-// ... perform operations ...
+// 提交事务（全部写入）
+dbfs.commit();
 
-// Commit
-manager.commit_transaction(tx_id)?;
-
-// Or rollback
-manager.rollback_transaction(tx_id)?;
+// 或者回滚（全部撤销）
+dbfs.rollback();
 ```
 
-### WriteAheadLog (WAL)
+### 事务的四个特性（ACID）
 
-Logs all transaction operations before they are applied to the filesystem.
+1. **原子性（Atomicity）**
+   - 多个文件操作要么全成功，要么全失败
+   - 不会有中间状态
 
-- **Begin**: Marks start of transaction
-- **Commit**: Marks successful completion
-- **Rollback**: Marks transaction cancellation
-- **Data**: Actual operation data
+2. **一致性（Consistency）**
+   - 文件系统始终处于正确状态
+   - 不会有损坏的数据
 
-### Transaction Operations
+3. **隔离性（Isolation）**
+   - 多个事务同时执行，互不干扰
+   - 每个事务看到的是一致的数据快照
 
-- `Write`: Write data to file at offset
-- `Create`: Create new file
-- `Delete`: Remove file
+4. **持久性（Durability）**
+   - 提交后的数据永久保存
+   - 系统重启后数据还在
 
-## Usage
+## 怎么实现的？
 
-### Basic Transaction
+### 核心组件
 
-```rust
-use dbfs::{TransactionManager, TransactionOperation};
+1. **事务管理器**
+   - 管理事务的生命周期
+   - 协调多个文件的操作
 
-let manager = TransactionManager::new();
+2. **写前日志（WAL）**
+   - 先记录操作日志，再修改数据
+   - 崩溃后可以根据日志恢复
 
-// Begin transaction
-let tx_id = manager.begin_transaction()?;
+3. **多版本控制（MVCC）**
+   - 每个事务看到自己的数据版本
+   - 读操作不会阻塞写操作
 
-// Add operations
-manager.add_operation(tx_id, TransactionOperation::Write {
-    path: "/test.txt".into(),
-    offset: 0,
-    data: b"Hello, DBFS!".to_vec(),
-});
+4. **崩溃恢复**
+   - 系统启动时检查日志
+   - 自动回滚未完成的事务
 
-// Commit
-manager.commit_transaction(tx_id)?;
+### 代码结构
+
+```
+subsystems/dbfs/
+├── src/
+│   ├── dbfs.rs           # DBFS 核心实现
+│   ├── transaction.rs    # 事务管理
+│   ├── wal.rs            # 写前日志
+│   ├── mvcc.rs           # 多版本控制
+│   └── recovery.rs       # 崩溃恢复
+└── elle_tests/           # Elle 并发测试
 ```
 
-### Crash Recovery
+## 怎么测试？
 
-After system restart, DBFS automatically recovers:
-
-```rust
-let wal = WriteAheadLog::new();
-let result = wal.recover()?;
-
-// result.last_committed: Last successfully committed transaction
-// result.uncommitted: Transactions to roll back
-```
-
-## Testing
-
-Run DBFS transaction tests:
+### 1. 基本功能测试
 
 ```bash
+# 启动系统
 cd /home/ubuntu2204/Desktop/Alien
-make dbfs-test
+make f_test
+
+# 在 QEMU 中运行
+./dbfs_test
 ```
 
-Expected output:
+这个测试会验证：
+- 事务的原子性
+- 崩溃后的数据一致性
+- 多事务并发执行的正确性
 
-```
-========================================
-DBFS Transaction Tests
-========================================
+### 2. Elle 并发测试
 
-✅ Transaction Begin/Commit: PASSED
-✅ Transaction Rollback: PASSED
-✅ WAL Recovery: PASSED
+Elle 是一个专门测试并发隔离性的工具。
 
-========================================
-DBFS Tests: 3/3 passed
-========================================
+```bash
+cd /home/ubuntu2204/Desktop/Alien/tests
+./run_elle_test.sh
 ```
 
-## Implementation Status
+Elle 会测试：
+- 多个进程同时读写，会不会出错
+- 事务之间会不会互相干扰
+- 数据是否始终保持一致
 
-- [x] Transaction Manager
-- [x] Write-Ahead Log (in-memory)
-- [x] Basic transaction operations
-- [x] Crash recovery framework
-- [ ] Persistent WAL to disk
-- [ ] Integration with VFS mount points
-- [ ] Multi-transaction concurrency
-- [ ] Performance optimization
+## 技术细节
 
-## Integration with Alien OS
+### 事务流程
 
-DBFS is integrated into the VFS subsystem:
+```
+1. BEGIN TRANSACTION
+   └─> 创建事务上下文，分配事务 ID
 
-1. **Mount Point**: `/tests` (or any mount point)
-2. **Backend**: FAT32 (can be extended to Ext4)
-3. **User Interface**: Standard POSIX syscalls (read, write, open, close)
+2. WRITE FILE
+   └─> 数据写入临时缓冲区，记录 WAL 日志
 
-## Future Enhancements
+3. COMMIT
+   └─> 将 WAL 标记为已提交
+   └─> 将数据写入实际文件
+   └─> 释放资源
 
-1. **Persistent WAL**: Store WAL on disk for true crash recovery
-2. **Snapshot Isolation**: MVCC for concurrent transactions
-3. **Compression**: Compress WAL entries
-4. **Checkpoints**: Periodic WAL checkpointing
-5. **Replication**: Multi-node transaction replication
+4. ROLLBACK (如果出错)
+   └─> 根据 WAL 撤销已执行的操作
+   └─> 释放资源
+```
 
-## References
+### 崩溃恢复流程
 
-- [ACID - Wikipedia](https://en.wikipedia.org/wiki/ACID)
-- [Write-Ahead Logging - PostgreSQL](https://www.postgresql.org/docs/current/wal.html)
-- [SQLite Transaction Management](https://www.sqlite.org/transactionintro.html)
+```
+系统启动
+  └─> 检查 WAL 日志
+      ├─> 有未提交的事务 → 回滚
+      ├─> 有已提交但未写完的数据 → 重做
+      └─> 清理 WAL 日志
+```
 
-## License
+## 性能考虑
 
-Part of the Alien OS project.
+- **WAL 写入**：顺序写入，比较快
+- **MVCC**：读操作不阻塞写操作
+- **批量提交**：多个小事务可以合并
+
+## 局限性
+
+1. 目前支持的基础操作有限
+2. 并发性能还有优化空间
+3. 不支持大文件（超过内存大小）
+
+## 未来计划
+
+- [ ] 支持更多文件操作（rename, chmod 等）
+- [ ] 优化并发性能
+- [ ] 支持分布式事务
+- [ ] 添加数据压缩
+
+## 相关文档
+
+- [Elle 测试说明](../tests/ELLE_QUICK_START.md)
+- [Alien OS 总体说明](../../README.md)
+- [测试套件说明](../../FINAL_TEST_README.md)

@@ -83,6 +83,16 @@ initramfs:
 	else \
 		echo "Warning: final_test not found"; \
 	fi
+	@echo "Copying elle_dbfs_client to initramfs..."
+	@if [ -f ../../elle_dbfs_client/target/release/elle_dbfs_client ]; then \
+		echo "Copying elle_dbfs_client to /tests"; \
+		mkdir -p $(initrd)/tests; \
+		cp ../../elle_dbfs_client/target/release/elle_dbfs_client $(initrd)/tests/elle_dbfs_client; \
+		chmod +x $(initrd)/tests/elle_dbfs_client; \
+		echo "elle_dbfs_client successfully added to /tests"; \
+	else \
+		echo "Warning: elle_dbfs_client not found"; \
+	fi
 	@echo "Copying test binaries to initramfs..."
 	@if [ -d ../../tests/testbin-second-stage ]; then \
 		echo "Copying test binaries to /tests"; \

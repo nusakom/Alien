@@ -495,7 +495,7 @@ pub fn begin_tx() -> TxId {
     for retry in 0..MAX_TX_RETRY {
         // 尝试获取 CURRENT_TX 锁
         match CURRENT_TX.try_lock() {
-            Ok(mut current_tx_guard) => {
+            Some(mut current_tx_guard) => {
                 // 成功获取锁，分配事务 ID
                 let tx_id = TxId::new(GLOBAL_TX_ID.fetch_add(1, Ordering::SeqCst));
                 *current_tx_guard = Some(tx_id);
@@ -507,7 +507,7 @@ pub fn begin_tx() -> TxId {
                 }
                 return tx_id;
             }
-            Err(_) => {
+            None => {
                 // 锁被占用，记录警告并重试
                 if retry < MAX_TX_RETRY - 1 {
                     log::warn!("⚠ DBFS: begin_tx lock contention (attempt {}/{}), retrying...",

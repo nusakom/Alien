@@ -4,7 +4,7 @@
 set -e
 
 ALIEN_DIR="/home/ubuntu2204/Desktop/Alien"
-ELLE_CLIENT_DIR="/home/ubuntu2204/Desktop/elle_dbfs_client"
+ELLE_CLIENT_DIR="$ALIEN_DIR/elle_dbfs_client"
 QEMU_SERIAL_SOCKET="/tmp/dbfs_elle.sock"
 
 echo "========================================"
@@ -36,7 +36,8 @@ cd "$ALIEN_DIR"
 qemu-system-riscv64 \
   -machine virt \
   -cpu rv64 \
-  -m 128M \
+  -m 2048M \
+  -smp 2 \
   -nographic \
   -bios default \
   -kernel target/riscv64gc-unknown-none-elf/release/kernel \

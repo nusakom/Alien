@@ -1,501 +1,298 @@
-<div align="center">
+# Alien OS
 
-  # Alien OS
+一个用 Rust 写的 RISC-V 操作系统，带事务型文件系统。
 
-  **A Modular RISC-V Operating System with Transactional Filesystem**
-![alt text](assert/image-20230815132104606.png)
-  [English](README_EN.md) | [中文](README_CN.md)
+## 这个系统是干什么的？
 
-</div>
+这是一个操作系统实验项目，主要特点：
+1. **DBFS 文件系统** - 支持事务，要么全部成功，要么全部失败
+2. **用 Elle 做并发测试** - 验证多线程操作不出错
+3. **用 Rust 写内核** - 不会有内存安全问题
+4. **模块化设计** - 各个子系统可以独立开发和测试
 
----
+## 为什么做这个系统？
 
-## Overview
+普通的文件系统有个大问题：写入文件时如果崩了，数据就乱了。
 
-Alien OS is a **RISC-V operating system written in Rust** that implements DBFS, a transactional filesystem with ACID guarantees. The project focuses on:
+比如：
+```
+进程 A: 写文件 1 → 成功 ✅
+进程 A: 写文件 2 → 崩溃 ❌
+结果: 文件 1 改了，文件 2 没改，数据不一致
+```
 
-- **Transactional Filesystem** - DBFS with WAL (Write-Ahead Log) and MVCC (Multi-Version Concurrency Control)
-- **Formal Verification** - Elle isolation testing framework for concurrency correctness
-- **Memory Safety** - Kernel implemented in Rust to prevent memory corruption issues
-- **Modular Architecture** - Pluggable subsystems for experimentation
+DBFS 解决了这个问题：
+```
+进程 A: 开始事务
+进程 A: 写文件 1 → 暂存
+进程 A: 写文件 2 → 暂存
+进程 A: 提交 → 全部写入 ✅
+       或回滚 → 全部撤销
+```
 
----
+就像数据库的事务一样，只不过是文件系统。
 
-## Quick Start
+## 系统架构
 
-### Prerequisites
+```
+┌─────────────────────────────────────┐
+│     用户程序 (User Applications)     │
+└──────────────┬──────────────────────┘
+               │
+┌──────────────▼──────────────────────┐
+│         系统调用层 (System Calls)    │
+│  (open, read, write, close, etc.)   │
+└──────────────┬──────────────────────┘
+               │
+┌──────────────▼──────────────────────┐
+│         VFS 层 (Virtual File System) │
+│     统一的文件操作接口                │
+└──────────────┬──────────────────────┘
+               │
+┌──────────────▼──────────────────────┐
+│            DBFS 层                   │
+│  ┌────────────────────────────┐    │
+│  │  事务管理器                  │    │
+│  │  - Begin / Commit / Rollback │    │
+│  │  - WAL (写前日志)            │    │
+│  │  - MVCC (多版本控制)          │    │
+│  │  - 崩溃恢复                   │    │
+│  └────────────────────────────┘    │
+└──────────────┬──────────────────────┘
+               │
+┌──────────────▼──────────────────────┐
+│         底层文件系统                  │
+│  (FatFs / ExtFs / 块设备)            │
+└─────────────────────────────────────┘
+```
 
-- Rust `nightly-2025-05-20`
-- QEMU `qemu-system-riscv64` (8.0+)
-- GNU Make
-- Python 3 (for Elle testing)
+## 怎么运行？
 
-### Build & Run
+### 1. 准备环境
 
 ```bash
-# Clone repository
-git clone https://github.com/your-username/Alien.git
-cd Alien
-
-# Set Rust toolchain
+# 安装 Rust（用 nightly 版本）
 rustup override set nightly-2025-05-20
 
-# Build kernel
+# 安装 QEMU（RISC-V 模拟器）
+sudo apt install qemu-system-riscv64
+
+# 安装其他工具
+sudo apt install make python3
+```
+
+### 2. 编译系统
+
+```bash
+cd /home/ubuntu2204/Desktop/Alien
+
+# 编译内核
 make kernel
 
-# Run with test application
-make f_test
-
-# In QEMU console
-/ # ./final_test
+# 或者用 cargo 直接编译
+cargo build -p kernel --release --target riscv64gc-unknown-none-elf
 ```
 
-**Expected output**:
-```
-✅ DBFS Correctness Test: PASSED
-✅ Dhrystone Benchmark: 1500 DMIPS
-✅ All Tests PASSED
-```
+### 3. 启动系统
 
----
-
-## Technical Details
-
-<details>
-<summary><b>Transactional Filesystem (DBFS)</b></summary>
-
-DBFS implements ACID properties through two mechanisms:
-
-- **WAL (Write-Ahead Log)**: All modifications are logged before being applied to disk, enabling crash recovery
-- **MVCC (Multi-Version Concurrency Control)**: Readers access snapshot versions without blocking writers, providing serializable isolation
-
-**ACID Guarantees**:
-- **Atomicity**: Transactions commit entirely or roll back completely
-- **Consistency**: Filesystem remains in a valid state after each transaction
-- **Isolation**: Concurrent transactions do not interfere (serializable isolation)
-- **Durability**: Committed changes survive system crashes
-
-</details>
-
-<details>
-<summary><b>Elle Isolation Testing</b></summary>
-
-DBFS uses Elle (employed by MongoDB, PostgreSQL) to verify isolation guarantees:
-
-- **Test Scale**: 200+ concurrent transactions, 50,000 operations per test
-- **Verification**: Proven serializable isolation under high concurrency
-- **Reliability**: <1% test failures after addressing lock contention
-
-Elle checks for isolation anomalies (write skew, cyclic dependencies) that traditional testing might miss.
-
-</details>
-
-<details>
-<summary><b>Concurrency Control Implementation</b></summary>
-
-Addressed lock contention in transaction initialization:
-
-```rust
-// Retry mechanism in begin_tx()
-for retry in 0..MAX_TX_RETRY {
-    match CURRENT_TX.try_lock() {
-        Ok(guard) => return tx_id,
-        Err(_) => core::hint::spin_loop(),
-    }
-}
+```bash
+qemu-system-riscv64 \
+  -machine virt \
+  -cpu rv64 \
+  -m 2048M \
+  -smp 2 \
+  -nographic \
+  -bios default \
+  -kernel target/riscv64gc-unknown-none-elf/release/kernel \
+  -drive file=tools/sdcard.img,if=none,format=raw,id=x0 \
+  -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 ```
 
-**Impact**: Reduced transaction start failures from 30-50% to <1% under concurrent load (200+ threads).
+参数说明：
+- `-m 2048M`: 分配 2GB 内存
+- `-smp 2`: 使用 2 个 CPU 核心
+- `-nographic`: 不使用图形界面
+- `-bios default`: 使用默认的固件
+- `-kernel`: 指定内核文件
 
-</details>
+### 4. 运行测试
 
-<details>
-<summary><b>Testing Strategy</b></summary>
+系统启动后，在命令行输入：
 
-Three-tier testing approach:
+```bash
+# 运行完整测试套件（推荐）
+./final_test
 
-1. **Unit Tests**: DBFS correctness, Dhrystone benchmark, syscall overhead
-2. **Concurrency Tests**: Elle isolation verification, crash recovery
-3. **POSIX Compatibility**: UnixBench, lmbench, iozone, iperf3
+# 或者只运行 DBFS 测试
+./dbfs_test
+```
 
-</details>
-
-<details>
-<summary><b>Performance Metrics</b></summary>
-
-| Metric | Measured Value |
-|--------|----------------|
-| Dhrystone | ~1500 DMIPS |
-| Syscall Overhead | <1000ns |
-| File Creation | 15μs (65K ops/s) |
-| Transaction Commit | 45μs (22K txn/s) |
-| Scalability (100 threads) | 40x throughput improvement |
-
-*Note: Performance measured on QEMU RISC-V 64-bit; results may vary on hardware.*
-
-</details>
-
----
-
-## System Architecture
-
-<div align="center">
-
-  ![Alien OS Architecture](assert/image-20230607222452791.png)
-
-  *Figure 1: Alien OS system architecture*
-
-</div>
-
-### Project Structure
+## 目录结构
 
 ```
 Alien/
-├── kernel/                   # Core kernel
-│   ├── sched/               # Process scheduler
-│   ├── sync/                # Synchronization primitives
-│   └── trap/                # Trap/interrupt handling
-├── subsystems/              # Pluggable subsystems
-│   ├── dbfs/               # Transactional filesystem
-│   │   ├── src/alien_integration/
-│   │   │   ├── inode.rs       # Transaction management
-│   │   │   ├── wal.rs         # Write-Ahead Log
-│   │   │   └── elle_handler_real.rs
-│   │   └── elle_tests/      # Elle isolation tests
-│   ├── vfs/                # Virtual filesystem switch
-│   ├── mm/                 # Memory management
-│   └── net/                # Network stack
-└── user/                   # User space
-    ├── apps/              # Applications (20+)
-    │   ├── final_test/    # Core functionality tests
-    │   └── shell/         # Command shell
-    └── libc/              # C library implementation
+├── kernel/                 # 内核代码
+│   ├── main.rs            # 内核入口
+│   ├── syscall/           # 系统调用实现
+│   ├── fs/                # 文件系统框架
+│   └── mm/                # 内存管理
+│
+├── user/                  # 用户程序
+│   ├── lib/               # 运行时库
+│   └── apps/              # 应用程序
+│       ├── final_test/   # 测试套件
+│       └── dbfs_test/    # DBFS 测试
+│
+├── subsystems/           # 子系统
+│   ├── dbfs/             # DBFS 文件系统 ⭐
+│   │   ├── src/
+│   │   │   ├── dbfs.rs           # DBFS 核心
+│   │   │   ├── transaction.rs    # 事务管理
+│   │   │   ├── wal.rs            # 写前日志
+│   │   │   └── mvcc.rs           # 多版本控制
+│   │   └── elle_tests/       # Elle 并发测试
+│   └── drivers/          # 驱动程序
+│       ├── block/         # 块设备驱动
+│       └── virtio/        # virtio 驱动
+│
+├── tools/                 # 工具
+│   └── initrd/            # 启动镜像
+│
+└── tests/                # 测试脚本
+    ├── run_elle_test.sh  # Elle 测试脚本
+    └── ELLE_QUICK_START.md
 ```
 
----
+## 核心特性
 
-## Testing
+### 1. 事务型文件系统（DBFS）
 
-### Quick Test
+DBFS 提供类似数据库的 ACID 保证：
 
+- **原子性（Atomicity）**
+  - 多个文件操作要么全成功，要么全失败
+  - 不会有中间状态
+
+- **一致性（Consistency）**
+  - 文件系统始终处于正确状态
+  - 崩溃后能恢复
+
+- **隔离性（Isolation）**
+  - 多个事务互不干扰
+  - 每个事务看到一致的数据快照
+
+- **持久性（Durability）**
+  - 提交的数据永久保存
+  - 系统重启后数据还在
+
+### 2. Elle 并发测试
+
+Elle 是一个测试框架，用来验证：
+- 多进程并发操作不会出错
+- 事务隔离性正确
+- 数据一致性保持
+
+测试配置：
+- 50,000 次操作
+- 200 个并发客户端
+- 测试模型：list-append（列表追加）
+
+### 3. Rust 内存安全
+
+内核用 Rust 编写，保证了：
+- 没有空指针
+- 没有缓冲区溢出
+- 没有数据竞争（编译时检查）
+- 自动内存管理（不需要手动 malloc/free）
+
+## 性能数据
+
+在 QEMU 中运行的性能（参考值）：
+
+| 测试 | 性能指标 |
+|-----|---------|
+| Dhrystone | 几百到几千 MIPS |
+| 算术测试 | 几千到几万次运算/秒 |
+| 系统调用 | 每秒几千次调用 |
+| DBFS 事务 | 每秒几十到上百个事务 |
+
+实际数值取决于你的机器性能。
+
+## 常见问题
+
+**Q: 编译失败了怎么办？**
+
+A: 确认用的是 `nightly-2025-05-20` 版本的 Rust：
 ```bash
-make f_test
-/ # ./final_test
-```
-
-### Elle Isolation Tests
-
-**Option 1: Mock Kernel (Faster Iteration)**
-```bash
-cd subsystems/dbfs/elle_tests
-python3 mock_kernel_server.py
-
-# In another terminal
-cd /home/ubuntu2204/Desktop/elle_dbfs_client
-./target/release/elle_dbfs_client
-```
-
-**Option 2: Real Kernel**
-```bash
-# Terminal 1
-cd /home/ubuntu2204/Desktop/Alien
-make f_test
-
-# Terminal 2
-cd /home/ubuntu2204/Desktop/elle_dbfs_client
-./target/release/elle_dbfs_client
-```
-
-**Option 3: Interactive Menu**
-```bash
-cd subsystems/dbfs/elle_tests
-./run_all_elle_tests.sh
-```
-
-### POSIX & Performance Tests
-
-```bash
-make f_test
-/ # cd /tests
-/tests # ./unixbench_testcode.sh
-/tests # ./lmbench_testcode.sh
-/tests # ./iozone_testcode.sh
-```
-
-**Current Test Results**:
-- Core tests: All DBFS functionality tests pass
-- Elle tests: <1% failure rate with 200+ concurrent transactions
-- Performance: Consistent scores across multiple runs
-
----
-
-## Documentation
-
-- **[README_EN.md](README_EN.md)** - Complete English documentation
-- **[README_CN.md](README_CN.md)** - 完整中文文档
-- **[TESTING.md](TESTING.md)** - Detailed testing procedures
-- **[FILESYSTEM_ARCHITECTURE.md](FILESYSTEM_ARCHITECTURE.md)** - DBFS implementation details
-- **[PROJECT_HIGHLIGHTS.md](PROJECT_HIGHLIGHTS.md)** - Development notes
-
----
-
-## Filesystem Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Application Layer                            │
-│  ┌──────────────────────┐  ┌─────────────────────────────────┐ │
-│  │  User Applications   │  │  System Call Interface          │ │
-│  └──────────────────────┘  └─────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   VFS Layer (Virtual File System)               │
-│  ┌───────────────┐  ┌───────────────┐  ┌─────────────────────┐ │
-│  │ File Abstr.   │  │ Inode Cache   │  │ Directory Ops       │ │
-│  └───────────────┘  └───────────────┘  └─────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      DBFS Transaction Layer                      │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Transaction Manager                                      │  │
-│  │  ├── MVCC Control (version chains, snapshot isolation)   │  │
-│  │  ├── Lock Manager (read/write locks, deadlock detection) │  │
-│  │  └── Buffer Manager (page cache, LRU eviction)           │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      Storage Engine                              │
-│  ┌───────────────┐  ┌───────────────┐  ┌─────────────────────┐ │
-│  │ Inode Store   │  │ Data Blocks   │  │ Free Space Mgmt     │ │
-│  │ (metadata)    │  │ (file content)│  │                      │ │
-│  └───────────────┘  └───────────────┘  └─────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────┐
-│               WAL (Write-Ahead Log)                              │
-│  ┌───────────────┐  ┌───────────────┐  ┌─────────────────────┐ │
-│  │ Log Records   │  │ Checkpoint    │  │ Crash Recovery      │ │
-│  └───────────────┘  └───────────────┘  └─────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Implementation Notes**:
-- **MVCC**: Readers access consistent snapshots without blocking writers
-- **Lock Manager**: Two-phase locking with deadlock detection via wait-for graph
-- **WAL**: Sequential log with periodic checkpointing for crash recovery
-- **Buffer Manager**: LRU cache with write-back policy
-
----
-
-## Project Development & Implementation
-
-### Implementation Overview
-
-This section documents the development process and key implementation details of DBFS, the transactional filesystem at the core of Alien OS.
-
-### DBFS Architecture
-
-DBFS (Database File System) is a transactional filesystem layer built on top of jammdb, an embedded key-value database. It provides ACID guarantees for file operations through a combination of Write-Ahead Logging (WAL) and Multi-Version Concurrency Control (MVCC).
-
-**Key Components:**
-
-1. **TransactionEngine** ([tx_engine.rs](subsystems/dbfs/src/tx_engine.rs))
-   - Manages transaction lifecycle (begin, commit, rollback)
-   - Coordinates between WAL and database layers
-   - Implements atomic multi-file operations
-
-```rust
-pub struct TransactionEngine<D: BlockDevice> {
-    db: DB,                          // jammdb instance
-    log_manager: LogManager<D>,      // WAL backend
-}
-
-impl<D: BlockDevice> TransactionEngine<D> {
-    pub fn write_file_transactional(&mut self, ino: u64, offset: u64, data: &[u8]) -> DbfsResult<()> {
-        // Step 1: Persist data to WAL (crash-safe)
-        let p_ptr = self.log_manager.append_data(data)?;
-
-        // Step 2: Begin database transaction
-        let tx = self.db.begin_batch();
-        let bucket = tx.get_bucket("inodes")?;
-
-        // Step 3: Update inode metadata
-        let mut meta: InodeMetadata = deserialize(/* ... */)?;
-        meta.extents.push(Extent {
-            logical_off: offset,
-            physical_ptr: p_ptr,
-            len: data.len() as u64,
-            crc: crc32(data),
-        });
-
-        // Step 4: Atomic commit
-        tx.commit()?;
-        Ok(())
-    }
-}
-```
-
-2. **WAL Backend Abstraction** ([wal_backend_v2.rs](subsystems/dbfs/src/wal_backend_v2.rs))
-   - Pluggable storage backends (memory, file, persistent memory)
-   - Sequential append-only log
-   - Crash recovery support
-
-```rust
-pub trait WalBackend: Send + Sync {
-    /// Append WAL record (must be sequential)
-    fn append(&self, record: &WalRecord) -> Result<(), WalBackendError>;
-
-    /// Force persistence (fsync/flush/clwb)
-    fn flush(&self) -> Result<(), WalBackendError>;
-
-    /// Read all WAL records (for recovery)
-    fn read_all<'a>(&'a self) -> Result<Box<dyn Iterator<Item = WalRecord> + 'a>, WalBackendError>;
-}
-```
-
-3. **Elle Integration** ([elle_interface.rs](subsystems/dbfs/src/elle_interface.rs))
-   - TCP-based client-server protocol
-   - Maps Elle operations to DBFS transactions
-   - Isolation verification framework
-
-### Concurrency Control Implementation
-
-**Problem:** Lock contention in `begin_tx()` caused 30-50% transaction failures under Elle's concurrency stress test (200+ concurrent transactions).
-
-**Solution:** Implemented retry mechanism with exponential backoff:
-
-```rust
-// subsystems/dbfs/src/alien_integration/inode.rs
-pub fn begin_tx() -> DbfsResult<usize> {
-    for retry in 0..MAX_TX_RETRY {
-        match CURRENT_TX.try_lock() {
-            Ok(guard) => {
-                let tx_id = NEXT_TX_ID.fetch_add(1, Ordering::SeqCst);
-                *guard = Some(tx_id);
-                return Ok(tx_id);
-            }
-            Err(_) => {
-                core::hint::spin_loop();
-            }
-        }
-    }
-
-    // Fallback: blocking lock
-    let guard = CURRENT_TX.lock();
-    // ... (proceed with transaction start)
-}
-```
-
-**Results:**
-- Before: 30-50% failure rate
-- After: <1% failure rate
-- Verified under 200+ concurrent Elle transactions
-
-### Testing Infrastructure
-
-Alien OS employs a three-tier testing strategy:
-
-**Tier 1: Core Functionality** ([user/apps/final_test/](user/apps/final_test/))
-```bash
-make f_test
-/ # ./final_test
-```
-- DBFS correctness (WAL, transaction commit/rollback)
-- Dhrystone benchmark (~1500 DMIPS)
-- System call overhead measurement (<1000ns)
-
-**Tier 2: Distributed Systems** ([subsystems/dbfs/elle_tests/](subsystems/dbfs/elle_tests/))
-```bash
-cd subsystems/dbfs/elle_tests
-./run_all_elle_tests.sh
-```
-- Elle isolation verification (200+ concurrent txns, 50K ops)
-- Crash recovery testing (simulated power loss)
-- TCP protocol correctness
-
-**[→ Elle Testing Guide](ELLE_TESTING_GUIDE.md)** - Complete guide to formal verification testing with Elle framework.
-
-**Tier 3: POSIX & Performance** ([tests/testbin-second-stage/](tests/testbin-second-stage/))
-```bash
-/tests # ./unixbench_testcode.sh
-/tests # ./lmbench_testcode.sh
-/tests # ./iozone_testcode.sh
-```
-- UnixBench (comprehensive system performance)
-- lmbench (latency measurements)
-- iozone (I/O throughput)
-- Network benchmarks (iperf3)
-
-### Comparison with Traditional Systems
-
-| Feature | Alien OS (DBFS) | Traditional FS (ext4/FAT) |
-|---------|-----------------|---------------------------|
-| **Transactions** | ✅ ACID (WAL + MVCC) | ❌ Journaling only |
-| **Isolation** | ✅ Elle verified | ⚠️ File-level locks |
-| **Concurrency** | ✅ <1% failure rate | ⚠️ Varies by workload |
-| **Memory Safety** | ✅ Rust enforced | ⚠️ Manual (C) |
-
-**[→ Detailed Comparison](COMPARISON.md)** - Comprehensive analysis with architecture diagrams, implementation details, and performance benchmarks.
-
----
-
-## Contributing
-
-Contributions are welcome. Areas of interest:
-
-- Additional filesystem implementations
-- Network subsystem enhancements
-- Device driver support
-- Testing infrastructure improvements
-
-```bash
-# Install dependencies
-sudo apt install qemu-system-misc make gcc python3
-
-# Clone and setup
-git clone https://github.com/your-username/Alien.git
-cd Alien
+rustup show
 rustup override set nightly-2025-05-20
-
-# Run tests
-make test
 ```
 
-### Development Guidelines
+**Q: QEMU 启动不了？**
 
-- Format code with `rustfmt`
-- Address `clippy` warnings
-- Write tests for new features
-- Update relevant documentation
+A: 检查是否安装了 `qemu-system-riscv64`：
+```bash
+qemu-system-riscv64 --version
+```
 
----
+**Q: 测试失败了？**
+
+A: 某些测试需要更多资源，可以增加内存和 CPU：
+```bash
+-m 4096M -smp 4
+```
+
+**Q: 怎么退出 QEMU？**
+
+A: 按 `Ctrl+A`，然后按 `X`
+
+**Q: 可以在真机上运行吗？**
+
+A: 目前只支持 QEMU 模拟，不支持真实硬件。
+
+**Q: 支持哪些文件操作？**
+
+A: 目前支持基本的文件操作（open, close, read, write, create, delete），更多功能正在开发中。
+
+## 相关文档
+
+- [DBFS 文件系统详细说明](subsystems/dbfs/README.md)
+- [测试套件说明](FINAL_TEST_README.md)
+- [Elle 测试指南](tests/ELLE_QUICK_START.md)
+- [文件系统架构](FILESYSTEM_ARCHITECTURE.md)
+
+## 开发状态
+
+当前版本：v0.1.0
+
+已完成：
+- ✅ DBFS 事务型文件系统
+- ✅ WAL 写前日志
+- ✅ MVCC 多版本控制
+- ✅ 崩溃恢复
+- ✅ Elle 并发测试
+- ✅ 完整的测试套件
+
+进行中：
+- 🔄 优化并发性能
+- 🔄 支持更多文件操作
+
+计划中：
+- ⏳ 分布式事务
+- ⏳ 数据压缩
+- ⏳ 真机硬件支持
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file.
+MIT License
 
----
+## 贡献
 
-## Acknowledgments
+欢迎提交 Issue 和 Pull Request！
 
-- **Rust Project** - Language and tooling support
-- **Elle** - Isolation verification framework
-- **RISC-V International** - Open ISA specification
-- **QEMU** - RISC-V emulation platform
+## 致谢
 
----
-
-<div align="center">
-
-  **Built with Rust**
-
-  **[⭐ Star on GitHub!](https://github.com/your-username/Alien)**
-
-</div>
+- Rust 社区
+- Elle 测试框架
+- QEMU 项目
+- RISC-V 国际组织
