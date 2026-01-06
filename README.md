@@ -139,6 +139,16 @@ Three-tier testing approach:
 
 ## System Architecture
 
+<div align="center">
+
+  ![Alien OS Architecture](assert/image-20230607222452791.png)
+
+  *Figure 1: Alien OS system architecture*
+
+</div>
+
+### Project Structure
+
 ```
 Alien/
 ├── kernel/                   # Core kernel
