@@ -3,7 +3,7 @@
   # Alien OS
 
   **A Modular RISC-V Operating System with Transactional Filesystem**
-
+![alt text](assert/image-20230815132104606.png)
   [English](README_EN.md) | [中文](README_CN.md)
 
 </div>
