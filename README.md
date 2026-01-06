@@ -80,7 +80,13 @@ sudo apt install qemu-system-riscv64
 # 安装其他工具
 sudo apt install make python3
 ```
-[参考链接]:(https://github.com/nusakom/Alienos-Environment.git)
+[参考链接](https://github.com/nusakom/Alienos-Environment.git)
+
+这个是一键安装环境的脚本，你可以直接运行它。
+
+如果有问题可以参考rcore的安装脚本。
+
+[rcore安装脚本](https://rcore-os.cn/arceos-tutorial-book/ch01-02.html)
 
 ### 2. 编译系统
 
