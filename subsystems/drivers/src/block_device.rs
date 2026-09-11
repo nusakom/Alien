@@ -52,6 +52,13 @@ struct BlkWait {
 pub struct GenericBlockDevice {
     device: Box<dyn LowBlockDevice>,
     cache: Mutex<LruCache<usize, FrameTracker>>,
+    /// 脏页表（页号）。由 `write` 在修改缓存页后 push；LRU 淘汰与 `flush()` 只回写其中的页。
+    ///
+    /// 上游（`950ccd84`）已声明该字段、并在两处淘汰路径里 `retain` 它，但**全仓没有任何 push**
+    /// ⇒ 恒为空 ⇒ 淘汰时无条件回写（连从未修改过的干净页也回写）。此处补上 push，
+    /// 使该字段从僵尸字段变成可用原语。
+    ///
+    /// 锁序：恒为 `cache` → `dirty`（先持 `cache`，再取 `dirty`）。
     dirty: Mutex<Vec<usize>>,
 }
 
@@ -155,12 +162,20 @@ impl BlockDevice for GenericBlockDevice {
                 }
                 let old_cache = cache_lock.push(page_id, cache);
                 if let Some((id, old_cache)) = old_cache {
-                    let start_block = id * PAGE_CACHE_SIZE / 512;
-                    let end_block = start_block + PAGE_CACHE_SIZE / 512;
-                    for i in start_block..end_block {
-                        let target_buf =
-                            &old_cache[(i - start_block) * 512..(i - start_block + 1) * 512];
-                        device.write_block(i, target_buf).unwrap();
+                    // 只回写**脏页**。干净页（仅被 read 进缓存、从未修改）的内容与设备完全一致，
+                    // 回写纯属冗余：在 128 MiB 设备上 mount 会把 64 MiB 页缓存全部填成干净页，
+                    // 淘汰时无条件回写会产生 131,072 次扇区写；本判定把它降到 0。
+                    //
+                    // 锁序保持 `cache` → `dirty`（与本文件既有顺序一致；反序会死锁）。
+                    if self.dirty.lock().contains(&id) {
+                        let start_block = id * PAGE_CACHE_SIZE / 512;
+                        let end_block = start_block + PAGE_CACHE_SIZE / 512;
+                        for i in start_block..end_block {
+                            let target_buf =
+                                &old_cache[(i - start_block) * 512..(i - start_block + 1) * 512];
+                            device.write_block(i, target_buf).unwrap();
+                        }
+                        // 保持「先写盘、后 retain」：绝不跨 device.write_block 持有 dirty。
                         self.dirty.lock().retain(|&x| x != id);
                     }
                 }
@@ -194,12 +209,20 @@ impl BlockDevice for GenericBlockDevice {
                 }
                 let old_cache = cache_lock.push(page_id, cache);
                 if let Some((id, old_cache)) = old_cache {
-                    let start_block = id * PAGE_CACHE_SIZE / 512;
-                    let end_block = start_block + PAGE_CACHE_SIZE / 512;
-                    for i in start_block..end_block {
-                        let target_buf =
-                            &old_cache[(i - start_block) * 512..(i - start_block + 1) * 512];
-                        device.write_block(i, target_buf).unwrap();
+                    // 只回写**脏页**。干净页（仅被 read 进缓存、从未修改）的内容与设备完全一致，
+                    // 回写纯属冗余：在 128 MiB 设备上 mount 会把 64 MiB 页缓存全部填成干净页，
+                    // 淘汰时无条件回写会产生 131,072 次扇区写；本判定把它降到 0。
+                    //
+                    // 锁序保持 `cache` → `dirty`（与本文件既有顺序一致；反序会死锁）。
+                    if self.dirty.lock().contains(&id) {
+                        let start_block = id * PAGE_CACHE_SIZE / 512;
+                        let end_block = start_block + PAGE_CACHE_SIZE / 512;
+                        for i in start_block..end_block {
+                            let target_buf =
+                                &old_cache[(i - start_block) * 512..(i - start_block + 1) * 512];
+                            device.write_block(i, target_buf).unwrap();
+                        }
+                        // 保持「先写盘、后 retain」：绝不跨 device.write_block 持有 dirty。
                         self.dirty.lock().retain(|&x| x != id);
                     }
                 }
@@ -207,6 +230,15 @@ impl BlockDevice for GenericBlockDevice {
             let cache = cache_lock.get_mut(&page_id).unwrap();
             let copy_len = min(PAGE_CACHE_SIZE - offset, len - count);
             cache[offset..offset + copy_len].copy_from_slice(&buf[count..count + copy_len]);
+
+            // 标记脏页：该缓存页已被修改，淘汰 / flush 时需要（且只需要）回写它。
+            // 锁序：此处已持 `cache`，再取 `dirty` ⇒ 仍是 `cache` → `dirty`。
+            {
+                let mut dirty = self.dirty.lock();
+                if !dirty.contains(&page_id) {
+                    dirty.push(page_id);
+                }
+            }
 
             // 关键修复（崩溃一致性/持久化）：write-through 到真实块设备。
             //
@@ -240,21 +272,29 @@ impl BlockDevice for GenericBlockDevice {
         self.device.capacity() * 512
     }
     fn flush(&self) -> AlienResult<()> {
-        // 兜底：把缓存中所有 dirty 页写回真实设备。
-        // （write 已 write-through，这里主要是 flush 语义完整性 + 防御性落盘。）
+        // 只回写**脏页**。
+        //
+        // 这不是新设计，而是补全上游未完成的设计意图：`950ccd84` 的 `flush()` 函数体被整体
+        // 注释掉，而注释掉的原文正是「遍历 `self.dirty` 逐页 `write_block`」——
+        // 只是 `dirty` 从无 push，于是恒为空、该意图从未生效。本次提交给它补上 push
+        // （见 `write`）与真正的脏页判定，把注释掉的代码变成可运行实现。
+        //
+        // 锁序：**先 `cache`、再 `dirty`**，与 `read`/`write` 主路径一致。
+        // 不可写成 `dirty` → `cache`：那与主路径互逆，存在死锁风险。
         let cache_lock = self.cache.lock();
+        let dirty_ids: Vec<usize> = self.dirty.lock().clone();
         let device = &self.device;
-        let mut flushed = 0usize;
         for (id, cache) in cache_lock.iter() {
+            if !dirty_ids.contains(id) {
+                continue;
+            }
             let start_block = id * PAGE_CACHE_SIZE / 512;
             let end_block = start_block + PAGE_CACHE_SIZE / 512;
             for i in start_block..end_block {
                 let target_buf = &cache[(i - start_block) * 512..(i - start_block + 1) * 512];
                 device.write_block(i, target_buf).unwrap();
             }
-            flushed += 1;
         }
-        let _ = flushed;
         self.dirty.lock().clear();
         Ok(())
     }
