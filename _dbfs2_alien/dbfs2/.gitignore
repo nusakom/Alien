@@ -1,0 +1,11 @@
+/target
+/Cargo.lock
+.idea
+test.dbfs
+my-database.db
+*.txt
+my-database1.db
+
+perf.data*
+
+venv

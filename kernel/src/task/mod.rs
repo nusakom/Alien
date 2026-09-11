@@ -21,6 +21,9 @@ use crate::{fs::read_all, task::schedule::schedule_now};
 mod context;
 mod control;
 mod cpu;
+/// Phase 8.1：QD=1 异步块设备自检，仅在 `blk_async_test` feature 下编译。
+#[cfg(feature = "blk_async_test")]
+mod blk_async_test;
 mod kthread;
 mod resource;
 pub mod schedule;
@@ -39,13 +42,23 @@ pub static INIT_PROCESS: Lazy<Arc<Task>> = Lazy::new(|| {
 /// 将初始进程加入进程池中进行调度
 pub fn init_task() {
     kthread::ktread_create(kthread_init, "kthread_test").unwrap();
-    let task = INIT_PROCESS.clone();
-    GLOBAL_TASK_MANAGER.add_task(Arc::new(FifoTask::new(task)));
+    // Phase 8.2 异步块设备自检（`blk_async_test` feature）必须**独占**块设备：
+    // 否则并发运行的 INIT 用户态进程会走 `BlockDevice::read`（同步 virtio-blk 读），
+    // 与在飞异步请求共享同一 virtqueue，触发 R4「sync+async 同时 in-flight」→ virtqueue 楔死 → EIO。
+    // 因此自检构建下不启动 INIT，仅保留 kthread_init（块设备自检）及其 worker，满足 R4 隔离。
+    #[cfg(not(feature = "blk_async_test"))]
+    {
+        let task = INIT_PROCESS.clone();
+        GLOBAL_TASK_MANAGER.add_task(Arc::new(FifoTask::new(task)));
+    }
     println!("Init task success");
 }
 
 fn kthread_init() {
     println!("kthread_init start...");
+    // Phase 8.1：必须在 task 上下文里跑，否则 async 会静默降级成同步读。
+    #[cfg(feature = "blk_async_test")]
+    blk_async_test::run();
     let mut time = get_time_ms();
     loop {
         let now = get_time_ms();

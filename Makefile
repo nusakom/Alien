@@ -65,6 +65,31 @@ else ifeq ($(FS),ext)
 FEATURES += ext
 endif
 
+# DBFS2 自检（事务性 + 增删改查）：boot 时在 /dbfs 上跑一遍并打印
+#   [dbfs-tx]      事务回滚 / 提交演示
+#   [dbfs-selftest] 文件与目录的 增 删 改 查
+# 演示时保持 y；不想要这些日志就 make SELFTEST=n
+SELFTEST ?=y
+ifeq ($(SELFTEST),y)
+FEATURES += dbfs_selftest
+endif
+
+# DBFS2 持久化后端：/dev/dbfs 从 RAMDISK 换成第二块 virtio-blk 盘（tools/dbfs.img）。
+# 开启后 DBFS2 数据真正落盘，是崩溃一致性测试（M6）的前提。
+#   make DBFS_PERSIST=y  → 持久化模式（qemu 会挂第二块 virtio-blk）
+#   make                 → 默认 RAMDISK 模式（演示/功能测试用）
+#
+# 关键：dbfs.img 用 cache.direct=on 绕过宿主机 page cache，
+# 这样 crash_consistency 测试用 pkill -9 模拟断电时数据也不会因宿主机 fs 没 sync 而丢失。
+# （默认 cache=writeback 会进 host page cache，pkill -9 后数据可能丢失 → crash_verify 全 MISSING。）
+DBFS_PERSIST ?=n
+DBFS_IMG ?= tools/dbfs.img
+ifeq ($(DBFS_PERSIST),y)
+FEATURES += dbfs_persist
+QEMU_ARGS += -drive file=$(DBFS_IMG),if=none,format=raw,id=x1,cache.direct=on \
+			 -device virtio-blk-device,drive=x1
+endif
+
 
 ifeq ($(NET),y)
 QEMU_ARGS += -device virtio-net-device,netdev=net0 \

@@ -1,0 +1,37 @@
+[package]
+name = "dbfs2-adapter"
+version = "0.1.0"
+edition = "2021"
+
+# 注意：本 crate 必须随 Alien 用 nightly 编译（dbfs2 依赖 const_mut_refs / const_weak_new / error_in_core 等）。
+# 本仓库根 Cargo.toml 的 workspace [patch] 已把所有供应链 git 依赖重定向到 vendor/，
+# 此处不再重复 [patch]（Rust 只认构建目标 workspace 的根 manifest 的 [patch]）。
+# 集成进 Alien 时：Alien 是独立 workspace，需在 Alien 根 Cargo.toml 加同样的 [patch]（见 docs/ALIEN_INTEGRATION.md）。
+
+[dependencies]
+# 新版 rvfs 框架（os-module/rvfs 仓库）。其 crate 包名即为 vfscore（与 Alien 的依赖写法一致）。
+vfscore = { git = "https://github.com/os-module/rvfs.git", features = ["linux_error"] }
+# DBFS2 后端（本仓库内，相对路径）。要求 dbfs2 已完成：rvfs -> rvfs_old 改名 + lib.rs pub use 重导出。
+# 必须开 "rvfs" feature：dbfs2 的 fs_type.rs/inode.rs 中非 gated 代码依赖 impl_rvfs 内定义的
+# From<DbfsFsStat> for StatFs / From<DbfsFileType> for InodeMode，关掉 "rvfs" 会编译失败。
+dbfs2 = { path = "../dbfs2", default-features = false, features = ["rvfs", "sli32k"] }
+
+# JammDB 类型（DB / memfile 的 DbFile·MemoryMap trait）在 adapter 的块设备后端 blockdev.rs 中
+# 直接用到，因此需要显式依赖。走与 dbfs2 相同的 git 源，由根 manifest 的 [patch] 重定向到
+# vendor/jammdb-patched（避免 crates.io / 上游 bug）。注意：dbfs2 内部的 jammdb 也被同一 [patch]
+# 指向同一 vendor 副本，因此两侧 jammdb::DB 是同一类型，可跨 crate 传递。
+jammdb = { git = "https://github.com/Godones/jammdb" }
+
+spin = "0.9.2"
+downcast-rs = { version = "1.2.0", default-features = false }
+bitflags = "1.3.2"
+log = "0.4"
+
+# core2：jammdb 的 DbFile / FileExt / IOResult 等 trait 都建立在 core2::io 之上
+# （Read/Write/Seek/Error/ErrorKind）。adapter 的 blockdev.rs 直接 impl 这些 trait，
+# 因此必须直接依赖 core2，且版本/feature 需与 jammdb 一致（0.4.0 + nightly），
+# 否则 trait 不匹配、无法编译。core2 0.4 在 crates.io 已 yank，由根 [patch] 重定向到 vendor。
+core2 = { version = "0.4.0", default-features = false, features = ["nightly"] }
+
+[features]
+default = []

@@ -11,7 +11,7 @@ use constants::{
 use gmanager::ManagerError;
 use log::{info, warn};
 use syscall_table::syscall_func;
-use vfs::{eventfd::eventfd, kfile::KernelFile, system_root_fs};
+use vfs::{eventfd::eventfd, kfile::File, kfile::KernelFile, system_root_fs};
 use vfscore::{
     path::VfsPath,
     utils::{VfsFileStat, VfsFsStat, VfsNodeType, VfsRenameFlag},
@@ -95,6 +95,13 @@ pub fn sys_openat(dirfd: isize, path: *const u8, flag: usize, mode: u32) -> Alie
 
     let dentry = path.open(file_mode)?;
     let file = KernelFile::new(dentry, flag);
+
+    // O_TRUNC：若指定则以读写方式打开后把文件截断为 0。
+    // 之前这里只处理了 O_CREAT，O_TRUNC 被忽略，导致用 O_TRUNC 打开的文件内容不被清空
+    //（dbfs_functest F3 truncate 用例 FAIL 的根因之一；另一根因是 userlib 的 O_TRUNC 值错位）。
+    if flag.contains(OpenFlags::O_TRUNC) {
+        let _ = file.truncate(0);
+    }
 
     let fd = process.add_file(Arc::new(file));
     warn!("openat fd: {:?}", fd);

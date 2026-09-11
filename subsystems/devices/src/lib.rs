@@ -13,7 +13,7 @@ extern crate alloc;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::ptr::NonNull;
 
-pub use block::{BLKDevice, BLOCK_DEVICE};
+pub use block::{init_dbfs_ramdisk, BLKDevice, BLOCK_DEVICE, DBFS_BLOCK_DEVICE};
 use config::MAX_INPUT_EVENT_NUM;
 use device_interface::{DeviceBase, GpuDevice, LowBlockDevice};
 use drivers::{
@@ -204,8 +204,14 @@ fn init_block_device(blk: prob::DeviceInfo, mmio_transport: Option<MmioTransport
             let size = block_device.capacity();
             println!("Block device size is {}MB", size * 512 / 1024 / 1024);
             let block_device = Arc::new(GenericBlockDevice::new(Box::new(block_device)));
-            block::init_block_device(block_device);
-            // register_device_to_plic(irq, block_device);
+            // Phase 8.1：init_block_device 是 move 语义（取 Arc<GenericBlockDevice>），
+            // 因此必须先 clone 一份再传，否则下面注册中断会 use-after-move。
+            block::init_block_device(block_device.clone());
+            // Phase 8.1：把块设备注册到 PLIC，virtio-blk 的完成中断才会路由到
+            // GenericBlockDevice::handle_irq -> VirtIOBlkWrapper::handle_irq。
+            // 设备侧的中断使能由 VirtIOBlkWrapper 构造时的 enable_interrupts() 完成，
+            // 两者缺一不可。
+            let _ = register_device_to_plic(irq, block_device);
             println!("Init block device success");
         }
         "starfive,jh7110-sdio" => {
@@ -218,6 +224,10 @@ fn init_block_device(blk: prob::DeviceInfo, mmio_transport: Option<MmioTransport
                 println!("Block device size is {}MB", size * 512 / 1024 / 1024);
                 let block_device = Arc::new(GenericBlockDevice::new(Box::new(block_device)));
                 block::init_block_device(block_device);
+                // Phase 8.1：SDIO 分支**保持不注册**。
+                // VF2SDDriver::handle_irq 是 `unimplemented!()`，注册后会直接 panic；
+                // 且其 read_block_async/write_block_async 恒降级为同步。
+                // 结论：异步块设备实验只能在 QEMU + virtio-blk 下做。
                 // register_device_to_plic(irq, block_device);
                 println!("Init SDIO block device success");
             }

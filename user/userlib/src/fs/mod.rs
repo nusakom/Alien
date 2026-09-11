@@ -17,11 +17,11 @@ bitflags! {
         const O_WRONLY = 0x1;
         const O_RDWR = 0x2;
         const O_CREAT = 0x40;
-        const O_EXCL = 0x200;
-        const O_NOCTTY = 0x400;
-        const O_TRUNC = 0x1000;
-        const O_APPEND = 0x2000;
-        const O_NONBLOCK = 0x4000;
+        const O_EXCL = 0x80;
+        const O_NOCTTY = 0x100;
+        const O_TRUNC = 0x200;
+        const O_APPEND = 0x400;
+        const O_NONBLOCK = 0x800;
         const O_NOFOLLOW = 0x400000;
         const O_DIRECTORY = 0x200000;
     }

@@ -36,6 +36,8 @@ fn main(_argc: usize, argv: Vec<String>) -> isize {
                 println!("seek_test");
                 println!("stat_test");
                 println!("dir_test");
+                println!("dbfs_test");
+                println!("dbfs_crud");
                 println!("time_test");
                 println!("thread_test1");
             }
@@ -44,6 +46,15 @@ fn main(_argc: usize, argv: Vec<String>) -> isize {
             }
             "dir_test" => {
                 dirtest::dir_test();
+            }
+            "dbfs_test" => {
+                // 单独跑 DBFS2（/dbfs）读写，绕开 fat32_test 里 list() 触发的
+                // 内核未实现 syscall(id=1000) panic。
+                dirtest::dbfs_test();
+            }
+            "dbfs_crud" => {
+                // DBFS2 完整 增 删 改 查 演示（面向老师展示）。
+                dirtest::dbfs_crud();
             }
             "alloc_test" => {
                 alloctest::alloc_test();

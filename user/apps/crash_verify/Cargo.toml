@@ -1,0 +1,11 @@
+[package]
+name = "crash_verify"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+Mstd = { path = "../../userlib" }
+
+[[bin]]
+name = "crash_verify"
+path = "src/main.rs"

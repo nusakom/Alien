@@ -1,0 +1,11 @@
+[package]
+name = "crash_write"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+Mstd = { path = "../../userlib" }
+
+[[bin]]
+name = "crash_write"
+path = "src/main.rs"

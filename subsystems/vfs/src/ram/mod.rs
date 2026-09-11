@@ -70,6 +70,11 @@ pub fn init_ramfs(ramfs: Arc<dyn VfsFsType>) -> Arc<dyn VfsDentry> {
     root_inode
         .create("tests", VfsNodeType::Dir, "rwxr-xr-x".into(), None)
         .unwrap();
+    // DBFS2 挂载点：根目录需预先存在该目录，否则 init_filesystem 里
+    // `path.join("dbfs")?.mount(...)` 会返回 ENOENT（与 /tests 同等处理）。
+    root_inode
+        .create("dbfs", VfsNodeType::Dir, "rwxr-xr-x".into(), None)
+        .unwrap();
 
     let _bashrc = root
         .create(".bashrc", VfsNodeType::File, "rwxrwxrwx".into(), None)

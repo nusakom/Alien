@@ -12,6 +12,7 @@ mem = { path = "../subsystems/mem" }
 interrupt = { path = "../subsystems/interrupt" }
 devices = { path = "../subsystems/devices" }
 drivers = { path = "../subsystems/drivers" }
+device_interface = { path = "../subsystems/device_interface" }
 unwinder = { path = "../subsystems/unwinder" }
 constants = { path = "../subsystems/constants" }
 config = { path = "../subsystems/config" }
@@ -48,6 +49,17 @@ smp = ["platform/smp"]
 
 fat = ["vfs/fat"]
 ext = ["vfs/ext"]
+
+# DBFS2 自检（事务性 + 增删改查）：boot 时在 /dbfs 上跑一遍并打印结果。
+# 由 Makefile 的 SELFTEST 开关控制（make SELFTEST=n 可关闭）。
+dbfs_selftest = ["vfs/dbfs_selftest"]
+
+# DBFS2 持久化后端：/dev/dbfs 从 RAMDISK 换成第二块 virtio-blk（M5/M6 崩溃一致性测试前提）。
+dbfs_persist = ["devices/dbfs_persist"]
+
+# Phase 8.1：QD=1 异步块设备闭环自检（挂在 kthread_init，只读不写）。
+# 默认关闭，不影响正常构建；用 make BLK_ASYNC_TEST=y 或手动加 --features blk_async_test 开启。
+blk_async_test = []
 
 slab = []
 talloc = []

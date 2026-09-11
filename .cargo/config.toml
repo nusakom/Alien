@@ -4,3 +4,11 @@
 #debug = true
 opt-level = 3
 lto = true
+
+[target.riscv64gc-unknown-linux-musl]
+linker = "riscv64-linux-musl-gcc"
+
+rustflags = [
+    "-C",
+    "link-arg=--sysroot=/home/parallels/Downloads/riscv64-linux-musl-cross/riscv64-linux-musl"
+]

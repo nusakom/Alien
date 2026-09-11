@@ -20,7 +20,10 @@ use vfscore::inode::VfsInode;
 use vfscore::{dentry::VfsDentry, fstype::VfsFsType, path::VfsPath, utils::VfsTimeSpec};
 
 use crate::dev::DevFsProviderImpl;
+use dbfs2_adapter::DbfsFs;
 pub mod dev;
+#[cfg(feature = "dbfs_selftest")]
+pub mod dbfs_selftest;
 pub mod epoll;
 pub mod eventfd;
 #[cfg(feature = "ext")]
@@ -91,12 +94,18 @@ fn register_all_fs() {
     let tmpfs = Arc::new(TmpFs::new(CommonFsProviderImpl));
     let pipefs = Arc::new(PipeFs::new(CommonFsProviderImpl, "pipefs"));
 
+    // DBFS2：数据库文件系统，坐在块设备层之上（/dev/dbfs 为其存储后端）。
+    // 与 diskfs/fat32 同构：挂载时由 VfsFsType::mount 接收块设备 inode，所有页读写
+    // 经由 VfsInode::read_at / write_at 落到块设备层（满足「块结构」约束）。
+    let dbfs = Arc::new(DbfsFs::new());
+
     FS.lock().insert("procfs".to_string(), procfs);
     FS.lock().insert("sysfs".to_string(), sysfs);
     FS.lock().insert("ramfs".to_string(), ramfs);
     FS.lock().insert("devfs".to_string(), devfs);
     FS.lock().insert("tmpfs".to_string(), tmpfs);
     FS.lock().insert("pipefs".to_string(), pipefs);
+    FS.lock().insert("dbfs".to_string(), dbfs);
 
     #[cfg(feature = "fat")]
     let diskfs = Arc::new(DiskFs::new(CommonFsProviderImpl));
@@ -113,6 +122,9 @@ fn register_all_fs() {
 
 /// Init the filesystem
 pub fn init_filesystem() -> AlienResult<()> {
+    // 在 devfs 扫描设备之前，先造好 DBFS2 的块设备（独立 RAMDISK），
+    // 这样 scan_system_devices 才能注册 /dev/dbfs 节点。
+    devices::init_dbfs_ramdisk();
     register_all_fs();
     let ramfs_root = ram::init_ramfs(FS.lock().index("ramfs").clone());
     let procfs = FS.lock().index("procfs").clone();
@@ -149,6 +161,34 @@ pub fn init_filesystem() -> AlienResult<()> {
 
     let diskfs_root = diskfs.i_mount(0, "/tests", Some(blk_inode), &[])?;
     path.join("tests")?.mount(diskfs_root, 0)?;
+
+    // DBFS2 自动挂载到 /dbfs，使用 /dev/dbfs 块设备作为存储后端（坐在块结构之上）。
+    let dbfs = FS.lock().index("dbfs").clone();
+    println!("[dbfs] step1: lookup /dev/dbfs ...");
+    let dbfs_blk_inode = match path.join("/dev/dbfs") {
+        Ok(p) => {
+            println!("[dbfs] step2: /dev/dbfs FOUND");
+            p.open(None).expect("open /dev/dbfs failed").inode()?
+        }
+        Err(e) => {
+            println!("[dbfs] ERROR step2: /dev/dbfs NOT FOUND (devfs node missing)");
+            return Err(e.into());
+        }
+    };
+    println!("[dbfs] step3: got dev inode, i_mount ...");
+    let dbfs_root = match dbfs.i_mount(0, "/dbfs", Some(dbfs_blk_inode), &[]) {
+        Ok(r) => {
+            println!("[dbfs] step4: i_mount OK");
+            r
+        }
+        Err(e) => {
+            println!("[dbfs] ERROR step4: i_mount FAILED (dbfs2 internal)");
+            return Err(e.into());
+        }
+    };
+    path.join("dbfs")?.mount(dbfs_root.clone(), 0)?;
+    println!("[dbfs] step5: mounted at /dbfs");
+
     println!("mount fs success");
 
     vfscore::path::print_fs_tree(&mut VfsOutPut, ramfs_root.clone(), "".to_string(), false)
@@ -157,6 +197,14 @@ pub fn init_filesystem() -> AlienResult<()> {
     initrd::populate_initrd(ramfs_root.clone())?;
 
     SYSTEM_ROOT_FS.call_once(|| ramfs_root);
+
+    // DBFS2 自检（事务性 + 增删改查），仅在 `dbfs_selftest` feature 打开时编译。
+    // 复用上面已挂载的 /dbfs 根 dentry：绝不重复 i_mount，否则块设备后端会重新格式化清空数据。
+    #[cfg(feature = "dbfs_selftest")]
+    dbfs_selftest::run(dbfs_root);
+    #[cfg(not(feature = "dbfs_selftest"))]
+    let _ = dbfs_root;
+
     println!("Init filesystem success");
     Ok(())
 }

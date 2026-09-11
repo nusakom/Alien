@@ -1,0 +1,15 @@
+# dbfs2 独立构建的 cargo 配置
+# =============================================================================
+# 位置：_dbfs2_alien/dbfs2/.cargo/config.toml（仅作用于从该目录发起的 dbfs2 构建，
+#       例如 `cargo build --features fuse --example fuse`；不影响 Alien 主工程 / 用户态构建）。
+#
+# 设计原则：不强制任何镜像源，继承与 Alien 主工程一致的默认 crates.io（在 Ubuntu 主机上
+# 已验证可用）。此前曾在此配置 [source.crates-io] replace-with = rsproxy-sparse，但
+# 若该镜像在用户主机不可达会导致 dbfs2 构建无法拉取任何 crate，故移除，改走默认源。
+#
+# 依赖离线化：rvfs / jammdb / dbop / core2 / fuser 均已通过根 Cargo.toml 的 [patch]
+# 指向 _dbfs2_alien/vendor/ 本地副本，fuser 在 dbfs2/Cargo.toml 中是本地 path 依赖，
+# 因此 dbfs2 构建不依赖任何 GitHub git 拉取；仅普通 crates.io 依赖需联网（默认源即可）。
+
+[net]
+git-fetch-with-cli = true

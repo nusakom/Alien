@@ -22,6 +22,11 @@ pub trait LowBlockDevice {
     fn write_block_async(&self, block_id: usize, buf: &[u8]) -> AlienResult<()>;
     fn handle_irq(&self);
     fn flush(&self) {}
+    /// 诊断接口：返回 `(irq_enter, irq_wake)` 计数，用于观测中断是否被合并（R5）与
+    /// 完成链是否推进。默认返回 (0,0)；`VirtIOBlkWrapper` 会覆盖为真实计数器。
+    fn blk_stats(&self) -> (usize, usize) {
+        (0, 0)
+    }
 }
 
 pub trait GpuDevice: Any + DeviceBase {

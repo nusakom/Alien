@@ -45,3 +45,7 @@ ramdisk = []
 test = []
 vf2 = [] # enable to probe vf2's sdcard
 hifive = []
+
+# DBFS2 持久化后端：把 /dev/dbfs 从 RAMDISK 换成第二块 virtio-blk 盘（tools/dbfs.img）。
+# 开启后 DBFS2 数据真正落盘，是崩溃一致性测试（M6）的前提。
+dbfs_persist = []

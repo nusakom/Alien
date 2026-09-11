@@ -26,6 +26,13 @@ BUILD_CRATES := \
 	sleep \
 	socket_test \
 	final_test \
+	dbfs_final_test \
+	dbfs_functest \
+	dbfs_perf \
+	fsx_rs \
+	fuzz_rs \
+	crash_write \
+	crash_verify \
 #	shell \
 	print \
 

@@ -10,3 +10,29 @@ members = [
     "user/musl/ftest",
 ]
 
+# =============================================================================
+# DBFS2（数据库文件系统）供应链 [patch]
+#
+# 约束（用户要求）：Alien 既有依赖「不能改、不能升级」。dbfs2 / adapter / vendor 是
+# 额外引入的新代码，其供应链 git 依赖（core2 / dbop / rvfs / jammdb）在解析时必须
+# 改指到 _dbfs2_alien/vendor/ 下打过补丁的本地副本：
+#   1) core2 0.4 在 crates.io 已全量 yank，必须重定向到本地副本；
+#   2) Godones/rvfs（dbfs2 内部的 rvfs_old）：riscv64 下 c_char 类型转换修 bug；
+#   3) Godones/jammdb：memfile 后端对齐 / 反序列化 bug 修复；
+#   4) dbop：离线可复现 vendor（避免 VM 首次联网抓取）。
+# 注意：仅重定向 dbfs2 体系新增的依赖；Alien 自身依赖的 os-module/rvfs（crate 名
+# vfscore）不做 patch，保持原样从 git 拉取，避免改动既有依赖。
+# 所有路径相对本 workspace 根目录。
+# =============================================================================
+[patch.crates-io]
+core2 = { path = "_dbfs2_alien/vendor/core2-0.4.0" }
+
+[patch."https://github.com/os-module/dbop.git"]
+dbop = { path = "_dbfs2_alien/vendor/dbop-a4d2b58" }
+
+[patch."https://github.com/Godones/rvfs.git"]
+rvfs = { path = "_dbfs2_alien/vendor/rvfs-patched" }
+
+[patch."https://github.com/Godones/jammdb"]
+jammdb = { path = "_dbfs2_alien/vendor/jammdb-patched" }
+

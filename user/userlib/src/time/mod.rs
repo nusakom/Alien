@@ -80,3 +80,15 @@ pub fn sleep(ms: usize) {
     ts.tv_nsec = (ms % 1000) * 1000000;
     sys_nanosleep(&mut ts as *mut TimeSpec as *mut u8, 0 as *mut u8);
 }
+
+/// 读 riscv 的 cycle 计数器（纳秒级计时，一条 `rdcycle` 指令）。
+/// 返回当前 CPU 周期计数；两次调用之差 / 频率 = 纳秒级耗时。
+/// 供性能测试做高精度计时，与 get_time_of_day(µs) 双对照。
+#[inline(always)]
+pub fn read_cycle() -> u64 {
+    let cycle: u64;
+    unsafe {
+        core::arch::asm!("rdcycle {}", out(reg) cycle);
+    }
+    cycle
+}

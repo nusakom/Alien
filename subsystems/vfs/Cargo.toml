@@ -28,6 +28,11 @@ ramfs = { git = "https://github.com/os-module/rvfs.git" }
 fat-vfs = { git = "https://github.com/os-module/rvfs.git", optional = true }
 lwext4-vfs = { git = "https://github.com/os-module/rvfs" , optional = true }
 devices = { path = "../devices" }
+# DBFS2 数据库文件系统适配层（坐在块设备层之上，后端为 /dev/dbfs 块设备）。
+# 路径指向 Alien 根目录下复制进来的 dbfs2-vfs-adapter 子仓的 adapter 包。
+# 该包内部再 path 依赖 ../dbfs2 与 ../vendor/*；其供应链 git 依赖由 Alien 根 Cargo.toml 的
+# [patch] 统一重定向到 _dbfs2_alien/vendor/*（core2/dbop/rvfs/jammdb）。
+dbfs2-adapter = { path = "../../_dbfs2_alien/adapter" }
 
 printf-compat = { version = "0.1", default-features = false, optional = true }
 cty = { version =  "0", optional = true }
@@ -44,6 +49,9 @@ features = ["strcmp","strcpy","strncmp","alloc"]
 
 [features]
 default = ["initrd"]
+# DBFS2 自检（事务性 + 增删改查）：boot 时在 /dbfs 上跑一遍并打印结果。
+# 默认关闭，不影响正常启动；打开后启动日志会多出 [dbfs-selftest] / [dbfs-tx] 段落。
+dbfs_selftest = []
 ext = ["dep:lwext4-vfs","dep:printf-compat","dep:cty", "tinyrlibc"]
 fat = ["dep:fat-vfs"]
 initrd  = ["dep:libflate","dep:cpio_reader","dep:core2"]

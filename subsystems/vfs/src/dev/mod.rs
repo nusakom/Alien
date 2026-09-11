@@ -3,8 +3,8 @@ use alloc::{collections::BTreeMap, sync::Arc};
 use constants::DeviceId;
 use devfs::DevKernelProvider;
 use devices::{
-    BLKDevice, GPUDevice, INPUTDevice, RTCDevice, UARTDevice, BLOCK_DEVICE, GPU_DEVICE,
-    KEYBOARD_INPUT_DEVICE, MOUSE_INPUT_DEVICE, RTC_DEVICE, UART_DEVICE,
+    BLKDevice, GPUDevice, INPUTDevice, RTCDevice, UARTDevice, BLOCK_DEVICE, DBFS_BLOCK_DEVICE,
+    GPU_DEVICE, KEYBOARD_INPUT_DEVICE, MOUSE_INPUT_DEVICE, RTC_DEVICE, UART_DEVICE,
 };
 use ksync::Mutex;
 use log::info;
@@ -173,6 +173,23 @@ fn scan_system_devices(root: Arc<dyn VfsInode>) {
         )
         .unwrap();
         info!("block device id: {}", block_device.device_id().id());
+        register_device(block_device);
+    });
+    // DBFS2 专用块设备节点：与 /dev/sda 同构，由 devices 子系统单独初始化一块 RAMDISK，
+    // 作为 DBFS2（JammDB）的存储后端，使 DBFS2 坐在块设备层之上（满足「块结构」约束）。
+    DBFS_BLOCK_DEVICE.get().map(|blk| {
+        let block_device = Arc::new(BLKDevice::new(
+            alloc_device_id(VfsNodeType::BlockDevice),
+            blk.clone(),
+        ));
+        root.create(
+            "dbfs",
+            VfsNodeType::BlockDevice,
+            "rw-rw----".into(),
+            Some(block_device.device_id().id()),
+        )
+        .unwrap();
+        info!("dbfs block device id: {}", block_device.device_id().id());
         register_device(block_device);
     });
     GPU_DEVICE.get().map(|gpu| {

@@ -1,0 +1,63 @@
+[package]
+name = "dbfs2"
+version = "0.2.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# 改名 rvfs -> rvfs_old：避免与 Alien 的 os-module/rvfs（crate 名同为 rvfs，供 vfscore）在
+# 同一构建图里包名冲突。dbfs2 所有 `use rvfs::` 相应改为 `use rvfs_old::`。
+# (见 dbfs2-adapter/适配分析.md §5-B 构建级阻塞2：包名冲突)
+rvfs_old = { package = "rvfs", git = "https://github.com/Godones/rvfs.git" }
+jammdb = { git = "https://github.com/Godones/jammdb" }
+#jammdb = {path = "../jammdb"}
+
+spin = "0.9.2"
+bitflags = "1.3.2"
+dbop = { git = "https://github.com/os-module/dbop.git" }
+preprint = "0.1.0"
+onlyerror = { version = "0.1", default-features = false }
+buddy_system_allocator = { version = "0.9.0" }
+
+libc = { version = "0.2.51", optional = true }
+core2 = { version = "0.4.0", default-features = false, optional = true }
+memmap2 = { version = "0.5.10", optional = true }
+downcast = { version = "0.11.0", optional = true }
+rand = { version = "0.8.5", optional = true }
+smallvec = { version = "1.6.1", optional = true }
+log = "0.4.17"
+
+[features]
+default = ["rvfs", "sli32k"]
+rvfs = []
+sli512 = []
+sli8k = []
+sli4k = []
+sli1k = []
+sli32k = []
+
+[dev-dependencies]
+env_logger = "0.9.0"
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+serde = { version = "1.0.136", default-features = false, features = [
+    "derive",
+    "alloc",
+] }
+dbfs2 = { path = "../dbfs2", default-features = false, features = [
+    "rvfs",
+    "sli32k",
+] }
+# 钉死 clap 版本：nightly-2024-05-01 (Cargo 1.80) 不支持 edition2024，
+# 而 clap 最新版的传递依赖 clap_lex 1.1.0 会要求 edition2024 导致构建失败。
+# 4.4.18 整棵依赖树均为 edition2021，可正常在该工具链编译。
+clap = { version = "=4.4.18", features = ["cargo", "derive"] }
+
+# =============================================================================
+# 离线 vendor [patch] 说明
+# -----------------------------------------------------------------------------
+# dbfs2 在 Alien 仓库内构建时，cargo 会将其纳入 Alien workspace（根 Cargo.toml），
+# 而 cargo 只认 workspace 根的 [patch]。因此 core2/dbop/rvfs/jammdb/fuser 的全部
+# 离线 vendor 重定向已统一写在 根 Cargo.toml 的 [patch] 段（路径相对仓库根）。
+# 此处若再写 [patch] 会被忽略并报警告，故不重复。
+# =============================================================================
