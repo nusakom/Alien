@@ -8,7 +8,9 @@
 //! 实现完全镜像 jammdb 自带的 `memfile.rs`，仅把「堆裸指针」换成「块设备内存镜像 + 设备 inode」：
 //! - `BlockDevFile`：持有块设备的内存镜像 `data: Vec<u8>`（长度恒 = `capacity`，`addr()` 指向它）
 //!   与设备 inode `dev`。`open` 只把**有效区间**读入 `data`；`write` 同时写进 `data` 并
-//!   write-through 到设备（持久化）；`read` 从 `data` 读；`sync_all` 兜底把 `data` 整体刷回设备。
+//!   write-through 到设备（持久化）；`read` 从 `data` 读；`flush` / `sync_all` 是 **no-op**
+//!   ——因为 write 已逐扇区 write-through，且 JammDB 对映射只读、改动经 arena 后 `write_all`，
+//!   映射中不存在待回写增量（原「整盘回写」是纯冗余，见 `sync_all` 注释）。
 //!   这样 JammDB 的数据库物理上就落在 Alien 块设备层上。
 //!
 //! ★ **两个「大小」必须分开**（Commit 1 的修复核心，见 `BlockDevFile` 字段注释）：
@@ -104,11 +106,15 @@ pub static WRITE_AMPLIFY_STATS: Mutex<WriteAmplifyStats> = Mutex::new(WriteAmpli
 pub struct WriteAmplifyStats {
     pub logical_write_bytes: usize,
     pub physical_write_calls: usize,
-    /// 实际交给 `dev.write_at` 的字节总数（= 逻辑写 + 全设备回写）。
+    /// 实际交给 `dev.write_at` 的字节总数。
+    /// 移除整盘冗余回写后 = 逻辑写字节数（不再包含全设备回写）。
     pub physical_write_bytes: usize,
     /// `sync_all()`（全设备镜像回写）调用次数。
+    /// **此后恒为 0**：`sync_all()` 已降级为 no-op（见该方法的注释）。
+    /// 字段保留是因为 `crate::lib` 对外导出、`dbfs_selftest` / `dbfs_perf` 仍在读取，
+    /// 删除会破坏调用方与打印格式；`0` 本身就是「冗余已消除」的可观测证据。
     pub sync_all_calls: usize,
-    /// `sync_all()` 累计写出的字节数。
+    /// `sync_all()` 累计写出的字节数。**此后恒为 0**（同上）。
     pub sync_all_bytes: usize,
 }
 
@@ -231,8 +237,11 @@ impl Write for BlockDevFile {
     }
 
     fn flush(&mut self) -> IOResult<()> {
-        // 所有写都已 write-through，这里仅做兜底全量刷回。
-        self.sync_all()
+        // 所有写已在 `Write::write` 中 write-through 到块设备
+        // （`drivers/src/block_device.rs:220-231`）；JammDB 对内存映射只做**只读**访问、
+        // 改动一律经 arena 暂存后 `write_all` 落盘 ⇒ 不存在待回写增量。
+        // 证据：`docs/phase8.3-c`、`docs/phase8.3-d`、`docs/phase8.3-e-step5`（两臂 CRASH_CONSISTENCY,PASS）。
+        Ok(())
     }
 }
 
@@ -278,25 +287,15 @@ impl FileExt for BlockDevFile {
     }
 
     fn sync_all(&self) -> IOResult<()> {
-        // 兜底：把内存镜像整体刷回块设备，实现持久化。
+        // 原实现把整盘镜像（= `capacity`）再写一遍：每次 commit 2 次 ⇒ 2 × 16 MiB = 33,554,432 B，
+        // 占设备写入 99.89–99.99%，是 891.30× 写放大的唯一来源。它是**纯冗余**：
+        //   ① `Write::write` 已逐扇区 write-through（`drivers/src/block_device.rs:220-231`）⇒ 返回即落盘；
+        //   ② JammDB 对内存映射只读、改动经 arena 暂存后 `write_all`
+        //      （`page.rs:36-39` 返回 `&Page`；`tx.rs:312-320`/`:348`）⇒ 映射里不存在「未回写的增量」；
+        //   ③ ⑤ 端到端实证：no-op 臂与 ON 臂 boot#2 日志逐行一致，两臂均 `CRASH_CONSISTENCY,PASS`。
         //
-        // ⚠️ 这里刻意用 `capacity` 而**不是** `logical_size`：Commit 1 只改「大小语义」，
-        //    必须逐字节保持原有的整盘回写行为，否则 8.3-D / ⑤ 的 A/B 基线
-        //    （`2 calls / 33,554,432 B / 891.30×`）会被污染，Commit 2 就无法做前后对比。
-        //    Commit 2 会整体移除这段冗余回写。
-        let n = self.capacity;
-        self.dev
-            .write_at(0, &self.data[..n])
-            .map_err(|_| core2::io::Error::new(ErrorKind::Other, "sync to block device failed"))?;
-        // 埋点（Phase 8.3-B）：全设备回写此前**完全未被统计**，而它才是每次 commit 的
-        // 主要物理写入来源。不埋这里会得到严重偏低的放大比，实验结论失真。
-        {
-            let mut st = WRITE_AMPLIFY_STATS.lock();
-            st.physical_write_calls += 1;
-            st.physical_write_bytes += n;
-            st.sync_all_calls += 1;
-            st.sync_all_bytes += n;
-        }
+        // 方法体保留（`DbFile` trait 契约；调用点 `tx.rs:350-351`、`db.rs:365-366` 一律不动），
+        // 但降级为 no-op。**不要再在这里补回写**：那会立刻恢复 891× 写放大。
         Ok(())
     }
 
