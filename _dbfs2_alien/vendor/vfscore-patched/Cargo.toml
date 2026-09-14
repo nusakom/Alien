@@ -1,0 +1,50 @@
+# =============================================================================
+# vfscore —— 新版 rvfs 框架（上游 https://github.com/os-module/rvfs.git）
+#
+# 为什么 vendor：Alien 与 DBFS2 adapter 都依赖这个 crate，而上游 path.rs 的
+# 符号链接解析（`__open` ⇄ `to_symlink` 互相递归）**没有深度上限**。遇到符号链接
+# 成环（a -> b, b -> a）会无限递归，直到内核栈溢出或内核堆耗尽 —— 表现为「跑测试
+# 时无声卡死」。pjdfstest 有 15 个 ELOOP 用例（chmod/06、open/12、mkdir/07 …，
+# 覆盖 16 个子目录中的 14 个）全部会触发，不修就拿不到任何判据。
+#
+# 上游代码不在 Alien 仓库内（cargo git checkout，git 不跟踪），直接改会在换机器 /
+# cargo update / 清缓存后丢失，也进不了 PR。因此按仓库既有的 vendor 模式
+# （rvfs-patched / core2 / dbop / jammdb）复制一份到仓库内，用 [patch] 指过去。
+#
+# 相对上游的改动（源码里都标了 [ALIEN-FIX]，共 23 处标记）：
+#   1) error.rs 新增 VfsError::Loop = 40（ELOOP）。
+#   2) path.rs 符号链接跟随深度上限 MAXSYMLINKS = 16 —— **故意不是 Linux 的 40**：
+#      这里的跟随是真递归，且 `to_symlink` 每层还带一个 255 B 栈 buf，单层约
+#      0.5–0.7 KiB；Alien 任务栈 32 KiB，40 层要吃掉 20–28 KiB（贴边），16 层约
+#      11 KiB。超限返回 VfsError::Loop，`__open`/`exists` 都把已跟随层数传下去。
+#      取值论证写在该常量上方的注释里。
+#   3) path.rs 把上游一批「出错就 panic」的点改成返回 Err：
+#      `to_symlink` 的 `symlink.parent().unwrap()`（真机实测：跑 pjdfstest 时
+#      chmod/00.t 第 5 条就把内核打挂，backtrace 指向 path.rs:106）、
+#      truncate 的 `.expect("truncate open failed")`、rename 的 new_parent
+#      `.expect(...)`、readdir 的 `.unwrap()`、若干 `assert!(!name.is_empty())`。
+#   4) path.rs 路径分量长度校验：空名 → EINVAL，超长名 → ENAMETOOLONG（NAME_MAX）。
+#   5) path.rs 新增 `VfsPath::open_nofollow()`（不跟随末尾符号链接），并让
+#      unlink / rmdir / rename 走不跟随末级链接的路径；供内核 fchownat / fchmodat /
+#      faccessat 在 AT_SYMLINK_NOFOLLOW 下直接操作链接本身
+#      （修复 lchown / lchmod 错误跟随悬空链接 → ENOENT）。
+#
+# 除上述三处外与上游 478afdd 完全一致。
+# =============================================================================
+[package]
+name = "vfscore"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitflags = "1.3.2"
+log = "0.4.14"
+downcast-rs = { version = "1.2.0", default-features = false }
+pconst = { git = "https://github.com/os-module/pconst.git", optional = true }
+
+[features]
+linux_error = ["dep:pconst"]
+
+# 上游的 [dev-dependencies]（ramfs / spin）与 tests/ 已移除：vendor 副本作为
+# workspace 内的 path 依赖会被自动纳为 member，保留会拖入 ../ramfs 这个
+# 不存在的路径。

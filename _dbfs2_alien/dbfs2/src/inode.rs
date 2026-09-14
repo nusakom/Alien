@@ -1055,6 +1055,10 @@ pub fn dbfs_common_rename(
         }
     };
 
+    if new_number == Some(old_number) {
+        return Ok(());
+    }
+
     // Atomic exchange
     if flags & RENAME_EXCHANGE != 0 {
         // we need to check if the new name is already used

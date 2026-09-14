@@ -30,6 +30,13 @@ core2 = { path = "_dbfs2_alien/vendor/core2-0.4.0" }
 [patch."https://github.com/os-module/dbop.git"]
 dbop = { path = "_dbfs2_alien/vendor/dbop-a4d2b58" }
 
+# vfscore（os-module/rvfs 新版 VFS，crate 名 vfscore）：
+# 上游 path.rs 的符号链接解析无深度上限（成环即栈溢出），且 rename 末级为 . / ..
+# 会让 DBFS2 把目录变成硬链接、进而触发 jammdb panic。改上游代码不能留在 cargo
+# checkout（git 不跟踪、换机器即丢、进不了 PR），故同样 vendor 到仓库内。
+[patch."https://github.com/os-module/rvfs.git"]
+vfscore = { path = "_dbfs2_alien/vendor/vfscore-patched" }
+
 [patch."https://github.com/Godones/rvfs.git"]
 rvfs = { path = "_dbfs2_alien/vendor/rvfs-patched" }
 
