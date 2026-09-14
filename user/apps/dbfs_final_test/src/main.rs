@@ -7,7 +7,7 @@ use alloc::string::ToString;
 // DBFS2 一键测试入口 —— 仿 final_test 的 fork+exec 模式。
 //
 // 三块测试的分工：
-//   1. 事务性自检 + 师兄遗留测试（文件/目录 CRUD）
+//   1. 事务性自检 + 文件/目录 CRUD 测试
 //        => 在内核 boot 时已自动执行，打印 [dbfs-tx] / [dbfs-selftest] 段落。
 //   2. 用户态真实读写（dbfs_test）+ 增删改查（dbfs_crud）
 //        => 由本程序 exec("./tests") 依次跑，走真实文件 syscall。
