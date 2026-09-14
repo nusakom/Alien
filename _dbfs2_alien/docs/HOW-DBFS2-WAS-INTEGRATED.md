@@ -196,6 +196,17 @@ read_blocks_nb() 提交 → 入 wait_queue → 让出 CPU
 也就是说，带页缓存的 `GenericBlockDevice::read/write`（DBFS2 实际走的那条）现在就是同步的，  
 就算我想把 DBFS2 接到异步路径上，接口也不在那儿。
 
+这一点在 boot 日志里也有旁证。2026-09-15 那次 boot 的中断自检打了 8 行：
+
+```text
+[blk-irq] #1 ack=true woke=false irq_enter=1 irq_wake=0 in_flight=0
+...
+[blk-irq] #8 ack=true woke=false irq_enter=8 irq_wake=0 in_flight=0
+```
+
+`irq_enter` 一路涨到 8，说明中断确实进来了；但 `irq_wake` 和 `in_flight` 始终是 0 ——
+没有任何任务真的发过异步块请求，也没有人被唤醒过。文件系统这边走的完全是同步路径。
+
 **第五条，write-through 要求"返回即落盘"，异步提交会把它破坏掉。**  
 `BlockDevFile::write` 写完镜像立刻 `dev.write_at(..)`，靠这一点保证崩溃一致性。  
 如果改成异步提交就返回，那"写成功"就不再是"数据到盘了"，持久化判断全部失效，  
@@ -334,23 +345,26 @@ static READDIR_CACHE: Mutex<BTreeMap<usize, Vec<VfsDirEntry>>> = Mutex::new(BTre
 
 ## 6. 凭什么说挂载成功了
 
-四层证据，从"挂上了"到"能用"。
+五层证据，从"挂上了"到"能用"。
 
 ### 证据 1：boot 时内核自己打印的挂载流程
 
-`subsystems/vfs/src/lib.rs` 里给挂载加了分步打印（失败会打 ERROR 并返回 Err）。实际 boot 输出：
+`subsystems/vfs/src/lib.rs` 里给挂载加了分步打印（失败会打 ERROR 并返回 Err）。2026-09-15 04:20 那次 boot 的输出：
 
 ```text
-[dbfs] step1: lookup /dev/dbfs ...
-[dbfs] step2: /dev/dbfs FOUND
-[dbfs] step3: got dev inode, i_mount ...
-[dbfs] step4: i_mount OK
-[dbfs] step5: mounted at /dbfs
-mount fs success
+[0] Init dbfs block device (RAMDISK) success
+[0] [dbfs] step1: lookup /dev/dbfs ...
+[0] [dbfs] step2: /dev/dbfs FOUND
+[0] [dbfs] step3: got dev inode, i_mount ...
+[0] [dbfs] step4: i_mount OK
+[0] [dbfs] step5: mounted at /dbfs
+[0] mount fs success
+drwxr-xr-x      4KB tests
+drwxr-xr-x      4KB dbfs        ← 紧接着打印的根目录列表里 /dbfs 出现了
 ```
 
-这是"挂载成功"最直接的证据。step4 过了说明 DBFS2 内部初始化通过，step5 说明 dentry 已经挂到 `/dbfs`。  
-原始输出在同目录 `evidence/` 下面的串口日志里。
+这是"挂载成功"最直接的证据。step4 过了说明 DBFS2 内部初始化通过，step5 说明 dentry 已经挂到 `/dbfs`。
+原始输出在同目录 `evidence/boot-full-selftest-2026-09-15.serial.txt`（那次 boot 的完整串口日志）。
 
 ### 证据 2：挂载后 `/dbfs` 可写
 
@@ -390,6 +404,47 @@ ok 4407 / not ok 450   （共 4857 条断言，完整跑完）
 
 能在 `/dbfs` 上跑几千条断言，前提就是它挂载可用，这本身就是对挂载的一种验证。
 
+### 证据 5：内核自带的 DBFS2 自检四部分全过
+
+开 `dbfs_selftest` feature 编译，boot 时内核会在挂载之后立刻跑一遍自检。2026-09-15 04:20 那次的结果：
+
+```text
+[dbfs-selftest] ============ DBFS2 selftest begin ============
+part 1/3  transaction: atomicity & durability
+  step2: tx dropped WITHOUT commit -> k is NOT visible        [Atomicity OK]
+  step4: after commit, a NEW tx reads k=v_commit              [Durability OK]
+part 1 PASS
+part 2/3  file CRUD: create / write / read / readdir / unlink
+  [C] create /dbfs/hello.txt -> OK
+  [U] write  21 bytes -> OK
+  [R] read   21 bytes = "hello from alien dbfs" -> OK
+  [Q] readdir [".", "hello.txt"]
+  [D] unlink /dbfs/hello.txt -> OK ; lookup after unlink -> Err (expected) -> OK
+part 2 PASS
+part 3/3  dir CRUD: mkdir / readdir / rmdir
+  [C] mkdir /dbfs/selftest_dir -> OK
+  [Q] readdir [".", ".."] (empty dir)
+  [D] rmdir -> OK ; lookup after rmdir -> Err (expected) -> OK
+part 3 PASS
+part 4/4  write amplification: logical vs physical write
+  [WA] logical write: 37689 bytes, physical write calls: 4 -> amp ratio ~1.00x
+  [WA] sync_all (full-device rewrite): 0 calls / 0 bytes
+  [WA] amplification(bytes) = 1.00x ; full-device rewrite share = 0.0%
+  [WA] elapsed for 1 write tx (4096B) = 0 ms
+part 4 PASS
+[dbfs-selftest] ============ DBFS2 selftest PASS ============
+[0] Init filesystem success
+...
+Init process is running
+Alien:/#
+```
+
+这份自检说明了四件事：事务是原子的（没 commit 的写入不生效）、commit 之后是持久的（新事务能读到）、
+文件和目录的增删改查都通、以及写放大是 1.00 倍（全盘回写那次冗余确实是 0）。
+最后 `Alien:/#` 说明 init 进程起来了、shell 正常。
+
+需要说明的是：这是**内核自带的自检**，不是第三方标准测试，它只能说明我列出来的这些用例是过的。
+
 ---
 
 ## 7. 还没做到的部分
@@ -403,7 +458,9 @@ ok 4407 / not ok 450   （共 4857 条断言，完整跑完）
    所以正文一律不把它们算作成果，也不在这里列什么"已修复清单"。
 3. **四臂对照矩阵没跑完。** 原计划是「FAT32/DBFS2 × 修复前/修复后」四格对照，实际只跑了两格就中断了，  
    没有完整的对照数据。
-4. **性能没测。** lmbench / iozone 都没跑过，没有任何吞吐或时延数据。3.5 节关于"同步 vs 异步"的判断  
+4. **标准性能工具没跑。** lmbench / iozone 都没跑过，没有吞吐数据。目前只有自检里那两个数：
+   写放大 1.00 倍、一次 4096 B 写事务 0 ms（0 ms 说明时钟分辨率不够，不能当真值用）。
+   3.5 节关于"同步 vs 异步"的判断同样没有实测支撑，只是设计上的推理。  
    也因此没有实测支撑，只是设计上的推理。
 5. **崩溃一致性只做到"有脚本"。** `run_crash.sh` 是有的，但没有跑出过完整的  
    「写入 → 断电 → 重启 → 校验」通过记录。3.3 节说的 write-through 是代码层面的保证，不是端到端验证过的结论。

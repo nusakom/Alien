@@ -54,6 +54,18 @@ mount fs success
 挂上之后 `/dbfs` 能读写、能建目录，实测记录在
 `_dbfs2_alien/docs/HOW-DBFS2-WAS-INTEGRATED.md` 第 6 节。
 
+开 `dbfs_selftest` 编译的话，boot 时还会跑一遍内核自带的 DBFS2 自检，四部分全过
+（事务原子性/持久性、文件 CRUD、目录 CRUD、写放大 1.00x），最后进到 shell：
+
+```text
+[0] [dbfs] step5: mounted at /dbfs
+[0] [dbfs-selftest] ============ DBFS2 selftest PASS ============
+Init process is running
+Alien:/#
+```
+
+完整日志：`_dbfs2_alien/docs/evidence/boot-full-selftest-2026-09-15.serial.txt`。
+
 存储后端走的是**同步**的路子：整库以内存镜像 + write-through 的方式坐在块设备上，
 没有引入 future，也没上绿色线程（为什么这么做，那份文档的第 3.5 节写了六条理由）。
 

@@ -409,6 +409,92 @@ Ubuntu 22.04 (Parallels VM)
 
 ---
 
+## Q10. `make` 走到 initramfs 时下载 busybox 失败：`Connecting to 192.168.1.4:7897... failed: Connection refused`
+
+**现象**
+
+```
+make -C tools/initrd
+Busybox does not exist
+--2026-09-15 03:41:13--  http://busybox.net/downloads/busybox-1.33.1.tar.bz2
+Connecting to 192.168.1.4:7897...
+failed: Connection refused.
+tar: busybox-1.33.1.tar.bz2: Cannot open: No such file or directory
+make[2]: *** [Makefile:20: download] Error 2
+make: *** [Makefile:141: initramfs] Error 2
+```
+
+`tools/initrd/Makefile` 里写死了 `wget http://busybox.net/downloads/busybox-1.33.1.tar.bz2`，
+而环境里的 `http_proxy` 指向 `192.168.1.4:7897`（Mac 上的 Verge / Clash 端口），这个地址连不上，
+于是 wget 拿不到包，后面的 `tar` 也就跟着炸。
+
+**怎么处理**
+
+这台机器是 Parallels 的 Ubuntu，仓库在 `/media/psf/Home/Downloads/Alien`，
+它跟 Mac 上的 `/Users/mac14/Downloads/Alien` 是**同一个目录**（psf 共享）。
+所以不用去修 VM 里的代理：直接在 Mac 上把包下好丢进 `tools/initrd/`，Ubuntu 那边立刻就能看到。
+
+```bash
+# Mac 上
+cd ~/Downloads/Alien/tools/initrd
+curl -sSL -o busybox-1.33.1.tar.bz2 https://busybox.net/downloads/busybox-1.33.1.tar.bz2
+shasum -a 256 busybox-1.33.1.tar.bz2
+# 12cec6bd2b16d8a9446dd16130f2b9298f1819f6e1c5f5887b6db03f5660d28  ← 与官网 .sha256 一致
+```
+
+**一个坑：光放压缩包没用。** Makefile 的 `download` 目标只判断目录在不在：
+
+```make
+download:
+	@if [ -d $(BB) ]; then echo "Busybox exists"; \
+	else wget ...; tar -xvf busybox-1.33.1.tar.bz2 && mv busybox-1.33.1 busybox; fi
+```
+
+它不看压缩包，只看 `busybox/` 目录。所以还必须在 Ubuntu 里解压并改名：
+
+```bash
+cd /media/psf/Home/Downloads/Alien/tools/initrd
+tar -xvf busybox-1.33.1.tar.bz2 && mv busybox-1.33.1 busybox
+```
+
+解压放在 Ubuntu 这边做，别在 Mac 上解：共享目录是 APFS，busybox 源码里有符号链接，跨平台解压容易出问题。
+
+**接着 `make` 还有两个交互点**
+
+1. `sudo apt install libncurses5-dev libncursesw5-dev` 要输密码
+2. `make menuconfig` 会弹 TUI，**要在里面勾 `Settings → Build static binary (no shared libs)`**，
+   然后 Exit 保存。Alien 的用户态是 musl 静态的，不勾静态 busybox 起不来。
+
+**代理那件事本身没修。** `192.168.1.4` 多半不是宿主机的 IP（Parallels 共享网络一般是 `10.211.55.x`），
+只是这次绕过去了。后面如果还要联网，`unset http_proxy https_proxy` 或者直接改对地址。
+
+---
+
+## Q11. 第一次成功启动（2026-09-15 04:20）
+
+busybox 编译好之后 `make run`，QEMU 起来了，OpenSBI v1.0 → Alien 内核 → 一路到 shell。
+关键几行：
+
+```
+[0] Init dbfs block device (RAMDISK) success
+[0] [dbfs] step1: lookup /dev/dbfs ...
+[0] [dbfs] step5: mounted at /dbfs
+[0] mount fs success
+[0] [dbfs-selftest] ============ DBFS2 selftest PASS ============
+[0] Init filesystem success
+Init process is running
+Alien:/#
+```
+
+DBFS2 挂载成功，内核自带的自检四个部分全过（事务原子性/持久性、文件 CRUD、目录 CRUD、写放大 1.00x），
+最后进到 `Alien:/#` 的 shell。完整串口日志在
+`_dbfs2_alien/docs/evidence/boot-full-selftest-2026-09-15.serial.txt`。
+
+也就是说 Q9 那个 PATH 的问题在这里没挡住启动（`export` 过后就能编），但它是**临时**的，
+换终端还要重新 export。
+
+---
+
 ## 明确没做完 / 没查清的部分
 
 如实列出，避免后面误以为都好了：
@@ -417,7 +503,12 @@ Ubuntu 22.04 (Parallels VM)
 2. **QEMU 的 HTTPS 下载没修**（Q2）。只是环境里恰好已有源码，绕过去了。换台机器会再撞上。
 3. **`crt1.o` 那个报错的根因没定位**（Q5）。只验证了"不是工具链缺文件"，配了 linker 后不复现，但为什么之前找不到没查清。
 4. **DNS 是临时设置**（Q1）。`resolvectl` 的设置重启后可能丢。
-5. **到这里为止只做到了"能编译"**。没有跑过 QEMU 启动，没有挂载过任何文件系统，没有跑过任何功能测试或性能测试。**编译通过 ≠ 系统能跑。**
+5. ~~**到这里为止只做到了"能编译"**~~ —— 这条已经过时了。2026-09-15 04:20 用 QEMU 真的跑起来了
+   （见 Q11），DBFS2 挂载成功、内核自检全过、进到了 shell。
+   但**功能测试和性能测试一项都没跑**：pjdfstest 没在这台机器上跑过，lmbench / iozone 也没跑过。
+   目前只能说"能启动、能挂载、自检用例通过"，**不能说这个文件系统是对的、也不能说它快**。
+6. **busybox 那次下载失败是靠手工放包绕过去的**（Q10），代理本身没修。换台机器或清了
+   `tools/initrd/` 还会再撞上。
 
 ---
 
