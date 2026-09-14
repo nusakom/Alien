@@ -1,0 +1,31 @@
+=== RC22 START mp=/dbfs ===
+--- A) 单个 mkdir（无 -p）---
+  A1 mkdir /dbfs/.rc22            rc=0  (期望 0)
+  A2 mkdir /dbfs/.rc22 再来一次    rc=1  (期望 1/EEXIST；Alien 报什么?)
+  A3 mkdir /dbfs/..         rc=0
+  A4 mkdir /             rc=0  (POSIX 期望 1/EEXIST)
+  A5 mkdir ''            rc=1  (POSIX 期望 1/ENOENT)
+  A6 mkdir 两级未建        rc=1  (期望 1/ENOENT)
+  A2/A4 的 stderr 原文:
+mkdir: can't create directory '/dbfs/.rc22': File exists
+--- B) mkdir -p ---
+mkdir: can't create directory '/': Invalid argument
+  B1 mkdir -p /dbfs/.rc22 (已存在)      rc=0
+mkdir: can't create directory '/': Invalid argument
+  B2 mkdir -p 新建两级 rc=0
+  B3 mkdir -p /             rc=0
+mkdir: can't create directory '/': Invalid argument
+  B4 mkdir -p /dbfs/etc (单级) rc=0
+  B5 mkdir -p ./rp1/rp2 (相对) rc=0
+  B 组结果取证: [ -d /dbfs/.rc22/p/q ] = no
+--- C) 对照：pjdfstest 的 mkdir（C 断言引擎，不走 busybox）---
+0
+  C1 pjdfstest mkdir 一级 rc=0
+0
+  C2 pjdfstest mkdir 二级(父已存在) rc=0
+  C 组取证: [ -d /dbfs/rc22c/d1 ] = yes
+  —— 结论读法 ——
+  A1=0 且 B* 全失败 ⇒ busybox -p 的实现路径问题（它自己先 mkdir('/') 或空串）
+  A2/A4 非 EEXIST ⇒ Alien 的 mkdir 对已存在对象/根返回的 errno 不对（Linux 都是 EEXIST）
+  C1/C2 全 0     ⇒ 文件系统本身有 mkdir 能力，缺陷在平台层 errno/busybox 而不是 FS
+=== RC22 DONE ===

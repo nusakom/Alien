@@ -1,0 +1,218 @@
+
+OpenSBI v1.7
+   ____                    _____ ____ _____
+  / __ \                  / ____|  _ \_   _|
+ | |  | |_ __   ___ _ __ | (___ | |_) || |
+ | |  | | '_ \ / _ \ '_ \ \___ \|  _ < | |
+ | |__| | |_) |  __/ | | |____) | |_) || |_
+  \____/| .__/ \___|_| |_|_____/|____/_____|
+        | |
+        |_|
+
+Platform Name               : riscv-virtio,qemu
+Platform Features           : medeleg
+Platform HART Count         : 1
+Platform IPI Device         : aclint-mswi
+Platform Timer Device       : aclint-mtimer @ 10000000Hz
+Platform Console Device     : uart8250
+Platform HSM Device         : ---
+Platform PMU Device         : ---
+Platform Reboot Device      : syscon-reboot
+Platform Shutdown Device    : syscon-poweroff
+Platform Suspend Device     : ---
+Platform CPPC Device        : ---
+Firmware Base               : 0x80000000
+Firmware Size               : 317 KB
+Firmware RW Offset          : 0x40000
+Firmware RW Size            : 61 KB
+Firmware Heap Offset        : 0x46000
+Firmware Heap Size          : 37 KB (total), 2 KB (reserved), 11 KB (used), 23 KB (free)
+Firmware Scratch Size       : 4096 B (total), 1400 B (used), 2696 B (free)
+Runtime SBI Version         : 3.0
+Standard SBI Extensions     : time,rfnc,ipi,base,hsm,srst,pmu,dbcn,fwft,legacy,dbtr,sse
+Experimental SBI Extensions : none
+
+Domain0 Name                : root
+Domain0 Boot HART           : 0
+Domain0 HARTs               : 0*
+Domain0 Region00            : 0x0000000000100000-0x0000000000100fff M: (I,R,W) S/U: (R,W)
+Domain0 Region01            : 0x0000000010000000-0x0000000010000fff M: (I,R,W) S/U: (R,W)
+Domain0 Region02            : 0x0000000002000000-0x000000000200ffff M: (I,R,W) S/U: ()
+Domain0 Region03            : 0x0000000080040000-0x000000008004ffff M: (R,W) S/U: ()
+Domain0 Region04            : 0x0000000080000000-0x000000008003ffff M: (R,X) S/U: ()
+Domain0 Region05            : 0x000000000c400000-0x000000000c5fffff M: (I,R,W) S/U: (R,W)
+Domain0 Region06            : 0x000000000c000000-0x000000000c3fffff M: (I,R,W) S/U: (R,W)
+Domain0 Region07            : 0x0000000000000000-0xffffffffffffffff M: () S/U: (R,W,X)
+Domain0 Next Address        : 0x0000000080200000
+Domain0 Next Arg1           : 0x00000000bfe00000
+Domain0 Next Mode           : S-mode
+Domain0 SysReset            : yes
+Domain0 SysSuspend          : yes
+
+Boot HART ID                : 0
+Boot HART Domain            : root
+Boot HART Priv Version      : v1.12
+Boot HART Base ISA          : rv64imafdch
+Boot HART ISA Extensions    : sstc,zicntr,zihpm,zicboz,zicbom,sdtrig,svadu
+Boot HART PMP Count         : 16
+Boot HART PMP Granularity   : 2 bits
+Boot HART PMP Address Bits  : 54
+Boot HART MHPM Info         : 16 (0x0007fff8)
+Boot HART Debug Triggers    : 2 triggers
+Boot HART MIDELEG           : 0x0000000000001666
+Boot HART MEDELEG           : 0x0000000000f4b509
+[0] 
+     _      _   _
+    / \    | | (_)   ___   _ __
+   / _ \   | | | |  / _ \ | '_ \
+  / ___ \  | | | | |  __/ | | | |
+ /_/   \_\ |_| |_|  \___| |_| |_|
+
+[0] Init logger None
+[0] Boot hart 0
+[0] This is a device tree representation of a riscv-virtio,qemu machine
+SMP:    1
+Memory: 0x80000000..0xc0000000
+PLIC:   0xc000000..0xc600000
+CLINT:  0x2000000..0x2010000
+Initrd: Some(
+    0xa0200000..0xa02bb1fa,
+)
+Bootargs: Some("rdinit=/init")
+[0] Page start:0x873a1,end:0xc0000,count:0x38c5f
+[0] Bitmap manage 232535 pages using 8 pages
+[0] Frame allocator init success
+[0] Relocate initrd data to 0x00000000873a9000
+[0] Talloc allocator init success
+[0] kernel text:          0x80200000-0x802e2000
+[0] kernel rodata:        0x802e2000-0x8036c000
+[0] kernel init_array:    0x8036c000-0x8036c4e0
+[0] kernel data:          0x8036c000-0x80380000
+[0] kernel bss:           0x80380000-0x873a1000
+[0] kernel heap:          0x873a1000-0xc0000000
+[0] map mmio: 0x100000-0x102000
+[0] map mmio: 0x2000000-0x2010000
+[0] map mmio: 0xc000000-0xc210000
+[0] map mmio: 0x10000000-0x10009000
+[0] map mmio: 0x30000000-0x40000000
+[0] Build kernel address space success
+[0] Activate paging mode success
+[0] Init qemu plic success
+[0] Init rtc, base_addr:0x101000, irq:11
+[0] PLIC enable irq 11 for hart 0, priority 1
+[0] Init rtc success, current time: "2026-09-15 00:31:44"
+[0] Init uart, base_addr:0x10000000,irq:10
+[0] PLIC enable irq 10 for hart 0, priority 1
+[0] Init uart success
+[0] Init block device, base_addr:0x10008000,irq:8
+[0] Block device size is 72MB
+[0] PLIC enable irq 8 for hart 0, priority 1
+[0] Init block device success
+[0] Init block device, base_addr:0x10007000,irq:7
+[0] Block device size is 16MB
+[0] PLIC enable irq 7 for hart 0, priority 1
+[0] Init block device success
+[0] created net interface
+[0]   ether:    00-00-00-00-00-00
+[0]   ip:       127.0.0.1/24
+[0]   gateway:  127.0.0.1
+[0] Init net device success
+[0] Init dbfs block device (persistent virtio-blk) success
+[0] register fs success
+[0] ramfs init success
+[0] procfs init success
+[0] devfs init success
+[0] sysfs init success
+[0] pipefs init success
+[0] [dbfs] step1: lookup /dev/dbfs ...
+[0] [dbfs] step2: /dev/dbfs FOUND
+[0] [dbfs] step3: got dev inode, i_mount ...
+[0] [dbfs] step4: i_mount OK
+[0] [dbfs] step5: mounted at /dbfs
+[0] mount fs success
+drwxr-xr-x      4KB root 
+drwxr-xr-x      4KB var 
+drwxr-xr-x      4KB etc 
+drwxr-xr-x      4KB dev 
+drwxr-xr-x      4KB proc 
+drwxr-xr-x      4KB sys 
+drwxrwxrwx      4KB tmp 
+drwxr-xr-x      4KB tests 
+drwxr-xr-x      4KB dbfs 
+[0] Initrd populate success
+[0] [dbfs-selftest] ============ DBFS2 selftest begin ============
+[0] [dbfs-selftest] part 1/3  transaction: atomicity & durability
+[0] [dbfs-tx] step1: begin write-tx, put k=v_rollback, read INSIDE tx -> v_rollback
+[0] [dbfs-tx] step2: tx dropped WITHOUT commit -> k is NOT visible  [Atomicity OK]
+[0] [dbfs-tx] step3: begin write-tx, put k=v_commit, then tx.commit()
+[0] [dbfs-tx] step4: after commit, a NEW tx reads k=v_commit  [Durability OK]
+[0] [dbfs-tx] tx selftest PASS: DBFS2 tx is atomic (rollback) and durable (commit)
+[0] [dbfs-selftest] part 1 PASS
+[0] [dbfs-selftest] part 2/3  file CRUD: create / write / read / readdir / unlink
+[0] [dbfs-selftest]   [C] create   /dbfs/hello.txt -> OK
+[0] [dbfs-selftest]   [U] write    21 bytes -> OK
+[0] [dbfs-selftest]   [R] read     21 bytes = "hello from alien dbfs" -> OK
+[0] [dbfs-selftest]   [Q] readdir  [".", "hello.txt"]
+[0] [dbfs-selftest]   [D] unlink   /dbfs/hello.txt -> OK
+[0] [dbfs-selftest]   [D] lookup   after unlink -> Err (expected) -> OK
+[0] [dbfs-selftest] part 2 PASS
+[0] [dbfs-selftest] part 3/3  dir CRUD: mkdir / readdir / rmdir
+[0] [dbfs-selftest]   [C] mkdir    /dbfs/selftest_dir -> OK
+[0] [dbfs-selftest]   [Q] readdir  [".", ".."] (empty dir)
+[0] [dbfs-selftest]   [D] rmdir    /dbfs/selftest_dir -> OK
+[0] [dbfs-selftest]   [D] lookup   after rmdir -> Err (expected) -> OK
+[0] [dbfs-selftest] part 3 PASS
+[0] [dbfs-selftest] part 4/4  write amplification: logical vs physical write
+[0] [dbfs-selftest]   [WA] logical write: 37689 bytes, physical write calls: 4 -> amp ratio ~1.00x
+[0] [dbfs-selftest]   [WA] physical_write_bytes = 37689 (logical 37689 + sync_all 0)
+[0] [dbfs-selftest]   [WA] sync_all (full-device rewrite): 0 calls / 0 bytes
+[0] [dbfs-selftest]   [WA] amplification(bytes) = 1.00x ; full-device rewrite share = 0.0%
+[0] [dbfs-selftest]   [WA] elapsed for 1 write tx (4096B) = 23 ms
+[0] [dbfs-selftest] part 4 PASS
+[0] [dbfs-selftest] ============ DBFS2 selftest PASS ============
+[0] Init filesystem success
+[0] ++++ setup interrupt ++++
+[0] [blk-irq] #1 ack=true woke=false irq_enter=1 irq_wake=0 in_flight=0
+[0] [blk-irq] #1 ack=true woke=false irq_enter=1 irq_wake=0 in_flight=0
+[0] ++++ setup interrupt done, enable:true ++++
+[0] [blk-irq] #2 ack=true woke=false irq_enter=2 irq_wake=0 in_flight=0
+[0] [blk-irq] #3 ack=true woke=false irq_enter=3 irq_wake=0 in_flight=0
+[0] [blk-irq] #4 ack=true woke=false irq_enter=4 irq_wake=0 in_flight=0
+[0] [blk-irq] #5 ack=true woke=false irq_enter=5 irq_wake=0 in_flight=0
+[0] [blk-irq] #6 ack=true woke=false irq_enter=6 irq_wake=0 in_flight=0
+[0] [blk-irq] #7 ack=true woke=false irq_enter=7 irq_wake=0 in_flight=0
+[0] [blk-irq] #8 ack=true woke=false irq_enter=8 irq_wake=0 in_flight=0
+[0] Init task success
+[0] Begin run task...
+[0] kthread_init start...
+Init process is running
+[1m[32mAlien[0m:[1m[34m/[0m# busybox --install -s /tests/bin <tall -s /tests/bin 2>/dev/null; export PATH=/tests/               <export PATH=/tests/bin:$PATH; MP=/dbfs busybox sh /tests/rc18.sh
+=== RC18 START mp=/dbfs ===
+[0] [blk-irq] #2 ack=true woke=false irq_enter=2 irq_wake=0 in_flight=0
+[0] [blk-irq] #3 ack=true woke=false irq_enter=3 irq_wake=0 in_flight=0
+[0] [blk-irq] #4 ack=true woke=false irq_enter=4 irq_wake=0 in_flight=0
+[0] [blk-irq] #5 ack=true woke=false irq_enter=5 irq_wake=0 in_flight=0
+[0] [blk-irq] #6 ack=true woke=false irq_enter=6 irq_wake=0 in_flight=0
+[0] [blk-irq] #7 ack=true woke=false irq_enter=7 irq_wake=0 in_flight=0
+[0] [blk-irq] #8 ack=true woke=false irq_enter=8 irq_wake=0 in_flight=0
+--- P) rename A/B/. C   （POSIX/Linux: EBUSY；pjdfstest 19.t: EINVAL|EBUSY）---
+  P) >>> 即将执行: /tests/pjdfstest/pjdfstest rename A/B/. C
+  P) rename A/B/. C => rc=[0]      (期望 EINVAL|EBUSY；非 0 之外的任何值都说明没挡住)
+--- Q) 状态取证（修复前：C 被创建为 dir，A/B 的 .. 被改写）---
+  Q) lstat A/B type=[dir]   (期望 dir：A/B 不该被动过)
+  Q) lstat C   type=[dir]     (期望不存在：不该凭空出现 C)
+  Q) lstat A type=[dir]       (期望 dir)
+--- S) 正例守卫：普通 rename 必须照旧成功（用**独立**的 G1/G2，别碰 A/B）---
+  S) >>> 即将执行: /tests/pjdfstest/pjdfstest mkdir G1 0755 ; /tests/pjdfstest/pjdfstest rename G1 G2
+  S) rename G1 G2 => rc=[0]  lstat G2=[dir]  (期望 0 / dir)
+--- R) 紧跟 rename A/B/.. **C**（与 P 用同一个目标名，与 rename/19.t 完全同构）---
+    为什么必须用同一个目标 C：第一次 rename 已把 C 造成「A/B 的 inode」的第二个目录名；
+    第二次 rename 的目标 C **存在** ⇒ 走「目标已存在」分支 ⇒ DBFS2 先 tx.delete_bucket(C 的 inode)
+    （= A/B 自己的目录桶：DBFS2 里目录的条目就存在它自己的 inode 桶里），
+    紧接着又对**同一批里已删的桶**执行 delete ⇒ jammdb panic。
+  R) >>> 即将执行: /tests/pjdfstest/pjdfstest rename A/B/.. C
+[0] line 181, file /Users/mac14/Downloads/Alien/_dbfs2_alien/vendor/jammdb-patched/src/bucket.rs: Cannot delete data from a deleted bucket.
+[0] ---START BACKTRACE---
+[0] [0x802ab6cc] (+0274) fatfs::dir::Dir<IO,TP,OCC>::open_file
+[0] ---END   BACKTRACE---
+[0] !TEST FINISH!

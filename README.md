@@ -37,6 +37,61 @@ A simple operating system implemented in rust. The purpose is to explore how to 
 
 
 
+## DBFS2 Integration（数据库文件系统）
+
+这个 fork 把 **DBFS2**（用 JammDB 做 KV 存储的数据库文件系统）接进了 Alien，在 QEMU 里
+**能挂载到 `/dbfs`**。boot 的时候内核会打印：
+
+```text
+[dbfs] step1: lookup /dev/dbfs ...
+[dbfs] step2: /dev/dbfs FOUND
+[dbfs] step3: got dev inode, i_mount ...
+[dbfs] step4: i_mount OK
+[dbfs] step5: mounted at /dbfs
+mount fs success
+```
+
+挂上之后 `/dbfs` 能读写、能建目录，实测记录在
+`_dbfs2_alien/docs/HOW-DBFS2-WAS-INTEGRATED.md` 第 6 节。
+
+存储后端走的是**同步**的路子：整库以内存镜像 + write-through 的方式坐在块设备上，
+没有引入 future，也没上绿色线程（为什么这么做，那份文档的第 3.5 节写了六条理由）。
+
+### 分层结构
+
+```text
+用户态        busybox / pjdfstest / dbfs_functest
+                 │  syscall (open / read / write / rename …)
+                 ▼
+内核 VFS      subsystems/vfs   →   vfscore（trait 式 API）
+                 │  实现 VfsInode / VfsFile / VfsFsType / VfsDentry
+                 ▼
+适配层        _dbfs2_alien/adapter/      ← 新建，薄适配层
+                 │  dbfs_common_*(ino: usize, buf: &[u8], …)
+                 ▼
+DBFS2 核心    _dbfs2_alien/dbfs2/        文件/目录存成 KV 记录
+                 │
+                 ▼
+JammDB        _dbfs2_alien/vendor/jammdb-patched/
+                 │  read_at / write_at
+                 ▼
+块设备层      /dev/dbfs        RAMDISK 或 virtio-blk
+```
+
+有一点要说明：DBFS2 是**坐在块设备层之上**的，不是自己 malloc 一块内存当磁盘，
+页读写全部经由 `VfsInode::read_at / write_at` 落到 Alien 的块设备，跟 fat32 一个路子。
+
+### 相关文档
+
+| 文档 | 内容 |
+|---|---|
+| `_dbfs2_alien/docs/HOW-DBFS2-WAS-INTEGRATED.md` | 怎么接的、内部结构、接口怎么兼容的、怎么证明挂载成功 |
+| `docs/ENV-SETUP-QA-2026-09-15.md` | 编译环境搭建问答日志 |
+
+> 挂载成功不等于功能完备。pjdfstest 在 `/dbfs` 上还有失败项；针对已发现缺陷的补丁
+> **没在当前仓库验证过**（所以不算成果，这里也不列）；性能和崩溃一致性没有做过完整对照测试。
+> 详细清单在上面第一份文档的第 7 节。
+
 ## Run
 
 1. install qemu 7.0.0(qume版本最低要求7.0.0)
