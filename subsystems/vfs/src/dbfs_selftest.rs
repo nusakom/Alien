@@ -33,8 +33,8 @@ pub fn run(root_dentry: Arc<dyn VfsDentry>) {
 
     let mut all_pass = true;
 
-    // ---------------- part 1/3：事务性 ----------------
-    println!("[dbfs-selftest] part 1/3  transaction: atomicity & durability");
+    // ---------------- part 1/4：事务性 ----------------
+    println!("[dbfs-selftest] part 1/4  transaction: atomicity & durability");
     let tx_ok = dbfs2_adapter::dbfs_tx_selftest(|s: &str| {
         println!("[dbfs-tx] {}", s);
     })
@@ -54,8 +54,8 @@ pub fn run(root_dentry: Arc<dyn VfsDentry>) {
         }
     };
 
-    // ---------------- part 2/3：文件增删改查 ----------------
-    println!("[dbfs-selftest] part 2/3  file CRUD: create / write / read / readdir / unlink");
+    // ---------------- part 2/4：文件增删改查 ----------------
+    println!("[dbfs-selftest] part 2/4  file CRUD: create / write / read / readdir / unlink");
     let p2 = file_crud(&root);
     println!(
         "[dbfs-selftest] part 2 {}",
@@ -63,8 +63,8 @@ pub fn run(root_dentry: Arc<dyn VfsDentry>) {
     );
     all_pass &= p2;
 
-    // ---------------- part 3/3：目录增删改查 ----------------
-    println!("[dbfs-selftest] part 3/3  dir CRUD: mkdir / readdir / rmdir");
+    // ---------------- part 3/4：目录增删改查 ----------------
+    println!("[dbfs-selftest] part 3/4  dir CRUD: mkdir / readdir / rmdir");
     let p3 = dir_crud(&root);
     println!(
         "[dbfs-selftest] part 3 {}",

@@ -4,6 +4,9 @@
 内核：cargo build --release -p kernel --features qemu,talloc,fat,dbfs_selftest（RAMDISK 模式，未开 dbfs_persist）
 qemu：qemu-system-riscv64 -M virt -m 1024M -smp 1 -initrd tools/initrd/initramfs.cpio.gz
 
+注：本日志拍摄时自检文案打印为 "part 1/3 / 2/3 / 3/3 / 4/4"（分段总数写错），
+源码已修为 part 1/4 ~ 4/4；日志保留原样，作为当时的真实输出。
+
 ────────────────────────────────────────────────────────────────────────
 
 Finished `release` profile [optimized] target(s) in 1m 15s

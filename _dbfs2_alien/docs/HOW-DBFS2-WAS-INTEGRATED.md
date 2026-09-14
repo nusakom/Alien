@@ -410,18 +410,18 @@ ok 4407 / not ok 450   （共 4857 条断言，完整跑完）
 
 ```text
 [dbfs-selftest] ============ DBFS2 selftest begin ============
-part 1/3  transaction: atomicity & durability
+part 1/4  transaction: atomicity & durability
   step2: tx dropped WITHOUT commit -> k is NOT visible        [Atomicity OK]
   step4: after commit, a NEW tx reads k=v_commit              [Durability OK]
 part 1 PASS
-part 2/3  file CRUD: create / write / read / readdir / unlink
+part 2/4  file CRUD: create / write / read / readdir / unlink
   [C] create /dbfs/hello.txt -> OK
   [U] write  21 bytes -> OK
   [R] read   21 bytes = "hello from alien dbfs" -> OK
   [Q] readdir [".", "hello.txt"]
   [D] unlink /dbfs/hello.txt -> OK ; lookup after unlink -> Err (expected) -> OK
 part 2 PASS
-part 3/3  dir CRUD: mkdir / readdir / rmdir
+part 3/4  dir CRUD: mkdir / readdir / rmdir
   [C] mkdir /dbfs/selftest_dir -> OK
   [Q] readdir [".", ".."] (empty dir)
   [D] rmdir -> OK ; lookup after rmdir -> Err (expected) -> OK
