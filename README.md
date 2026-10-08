@@ -67,7 +67,6 @@ Alien:/#
 完整日志：`_dbfs2_alien/docs/evidence/boot-full-selftest-2026-09-15.serial.txt`。
 
 存储后端走的是**同步**的路子：整库以内存镜像 + write-through 的方式坐在块设备上，
-没有引入 future，也没上绿色线程（为什么这么做，那份文档的第 3.5 节写了六条理由）。
 
 ### 分层结构
 
@@ -92,17 +91,6 @@ JammDB        _dbfs2_alien/vendor/jammdb-patched/
 
 有一点要说明：DBFS2 是**坐在块设备层之上**的，不是自己 malloc 一块内存当磁盘，
 页读写全部经由 `VfsInode::read_at / write_at` 落到 Alien 的块设备，跟 fat32 一个路子。
-
-### 相关文档
-
-| 文档 | 内容 |
-|---|---|
-| `_dbfs2_alien/docs/HOW-DBFS2-WAS-INTEGRATED.md` | 怎么接的、内部结构、接口怎么兼容的、怎么证明挂载成功 |
-| `docs/ENV-SETUP-QA-2026-09-15.md` | 编译环境搭建问答日志 |
-
-> 挂载成功不等于功能完备。pjdfstest 在 `/dbfs` 上还有失败项；针对已发现缺陷的补丁
-> **没在当前仓库验证过**（所以不算成果，这里也不列）；性能和崩溃一致性没有做过完整对照测试。
-> 详细清单在上面第一份文档的第 7 节。
 
 ## Run
 
